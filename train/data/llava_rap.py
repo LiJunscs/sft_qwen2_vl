@@ -53,26 +53,27 @@ class CustomDataset(Dataset):
                     if isinstance(item["image"], str):
                         visual_path = os.path.join(image_dir_path, item["image"])
                         visual_path = Image.open(visual_path)
-                        if data_args.repeat > 1:
-                            visual_list = [visual_path]
-                            visual_copy = [visual_path.copy() for _ in range(data_args.repeat - 1)]
-                            if data_args.enhance:
-                                for i in range(1, data_args.repeat - 1):
-                                    img = visual_copy[i]
-                                    # 随机调整对比度（0.8 到 1.2 之间）
-                                    contrast_factor = random.uniform(0.8, 1.2)
-                                    contrast_enhancer = ImageEnhance.Contrast(img)
-                                    img = contrast_enhancer.enhance(contrast_factor)
-
-                                    # 随机调整饱和度（0.7 到 1.3 之间）
-                                    saturation_factor = random.uniform(0.7, 1.3)
-                                    color_enhancer = ImageEnhance.Color(img)
-                                    img = color_enhancer.enhance(saturation_factor)
-                                    visual_copy[i] = img
-                                visual_path = visual_list + visual_copy
-
                     elif isinstance(item["image"], Image.Image):
                         visual_path = item["image"]
+                    if data_args.repeat > 1:
+                        visual_list = [visual_path]
+                        visual_copy = [visual_path.copy() for _ in range(data_args.repeat - 1)]
+                        if data_args.enhance:
+                            for i in range(data_args.repeat - 1):
+                                img = visual_copy[i]
+                                # 随机调整对比度（0.8 到 1.2 之间）
+                                contrast_factor = random.uniform(0.8, 1.2)
+                                contrast_enhancer = ImageEnhance.Contrast(img)
+                                img = contrast_enhancer.enhance(contrast_factor)
+
+                                # 随机调整饱和度（0.7 到 1.3 之间）
+                                saturation_factor = random.uniform(0.7, 1.3)
+                                color_enhancer = ImageEnhance.Color(img)
+                                img = color_enhancer.enhance(saturation_factor)
+                                visual_copy[i] = img
+                            visual_list = visual_list + visual_copy
+                            # 构造成一个二维列表，满足一个对话，多张图片
+                            visual_path = [visual_list]
                 elif "video" in item:
                     video_name = item["video"]
                     if not video_name.endswith(".mp4"):

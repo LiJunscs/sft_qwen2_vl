@@ -1704,6 +1704,8 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
                 ## 压缩视觉信息
                 visual_start_idx = (input_ids == self.config.vision_start_token_id).nonzero()[0][1] + 1
                 visual_end_idx = visual_start_idx + n_image_features - 1
+                ## NOTE: 仅作为测试使用处理多张图片，并且假设每张图片大小都相同，后续将会修改
+                image_grid_thw[0, 0] = image_grid_thw[0, 0] * image_grid_thw.shape[0] 
                 inputs_embeds, position_ids, attention_mask, labels = self.frames_compress_then_scale(
                     input_embeds=inputs_embeds, 
                     visual_start=visual_start_idx, 
