@@ -79,32 +79,41 @@ def process_data(contexts: List[str], visuals: List[Union[Image.Image, str]], pr
 
 def get_assistant_mask(input_ids: torch.Tensor, processor: AutoProcessor):
     batch, seqlen = input_ids.shape
-    assert batch == 1, "Only support batch size 1 yet"
     im_start = processor.tokenizer.encode("<|im_start|>")[0]
     im_end = processor.tokenizer.encode("<|im_end|>")[0]
 
-    im_start_indices = torch.nonzero(input_ids[0] == im_start).squeeze()
-    if len(im_start_indices) < 2:
-        return torch.ones(batch, seqlen, device=input_ids.device, dtype=torch.bool) 
-    im_start_assistance = im_start_indices[-2].item()
+    # 找出所有 <|im_start|> 和 <|im_end|> 的位置
+    im_start_mask = input_ids == im_start
+    im_end_mask = input_ids == im_end
 
-    im_end_indices = torch.nonzero(input_ids[0] == im_end).squeeze()
-    if len(im_end_indices) < 2:
-        return torch.ones(batch, seqlen, device=input_ids.device, dtype=torch.bool) 
-    im_end_assistance = im_end_indices[-1].item()
+    # 生成每个样本的索引矩阵，用于后续定位
+    indices = torch.arange(seqlen, device=input_ids.device).unsqueeze(0).expand(batch, -1)
 
+    # 提取每个样本中 <|im_start|> 和 <|im_end|> 的索引
+    im_start_indices = indices * im_start_mask
+    im_end_indices = indices * im_end_mask
+
+    # 对于 <|im_start|> 数量少于 2 或者 <|im_end|> 数量少于 2 的样本，将其索引置为 -1
+    valid_start = im_start_mask.sum(dim=1) >= 2
+    valid_end = im_end_mask.sum(dim=1) >= 2
+    valid = valid_start & valid_end
+
+    # 提取倒数第二个 <|im_start|> 和最后一个 <|im_end|> 的索引
+    sorted_start_indices = torch.sort(im_start_indices, dim=1, descending=True)[0]
+    sorted_end_indices = torch.sort(im_end_indices, dim=1, descending=True)[0]
+    second_last_start = sorted_start_indices[torch.arange(batch), torch.ones((batch, ), device=input_ids.device, dtype=torch.int32)]
+    last_end = sorted_end_indices[torch.arange(batch), torch.zeros((batch, ), device=input_ids.device, dtype=torch.int32)]
+
+    # 处理无效样本，将无效样本的索引置为 -1
+    second_last_start[~valid] = -1
+    last_end[~valid] = -1
+
+    # 创建掩码矩阵
     mask = torch.ones(batch, seqlen, device=input_ids.device, dtype=torch.bool)
-    mask[:, im_start_assistance : im_end_assistance + 1] = False
+    batch_indices = torch.arange(batch, device=input_ids.device).unsqueeze(1)
+    seq_indices = torch.arange(seqlen, device=input_ids.device).unsqueeze(0)
+    in_range = (seq_indices >= second_last_start.unsqueeze(1)) & (seq_indices <= last_end.unsqueeze(1))
+    mask[in_range] = False
+
     return mask
 
-if __name__ == "__main__":
-    model = Qwen2VLForConditionalGeneration.from_pretrained("/home/lijun2/multimodal/checkpoints/Qwen2-VL-7B-Instruct", torch_dtype=torch.float16, device_map="auto", attn_implementation="flash_attention_2").eval()
-    qwen_processor = AutoProcessor.from_pretrained("/home/lijun2/multimodal/checkpoints/Qwen2-VL-7B-Instruct")
-    contexts = ["Hello", "Who are you", "Thank you", "Good luck"]
-    img1 = Image.open("/data/public/multimodal/yuanziqi/datasets/pretraining_datasets/OCR-VQA-200K/images_o/B016X4I0JY.jpg")
-    img2 = Image.open("/data/public/multimodal/yuanziqi/datasets/pretraining_datasets/OCR-VQA-200K/images_o/B0170JXKQE.jpg")
-    visuals = [img1, img2, "/home/lijun2/multimodal/dataset/video-mme/videomme/data/zxKPjD8urG4.mp4", "/home/lijun2/multimodal/dataset/video-mme/videomme/data/ZXoaMa6jlO4.mp4"]
-    inputs = process_data(contexts=contexts, visuals=visuals, processor=qwen_processor)
-    inputs = inputs.to("cuda")
-    outputs = model.generate(**inputs, max_new_tokens=32, use_cache=True, output_attentions=False, output_hidden_states=False)
-    print()

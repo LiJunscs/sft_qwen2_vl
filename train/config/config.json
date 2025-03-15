@@ -41,7 +41,11 @@
         "temporal_patch_size": 2
     },
     "compressor_config": {
-        "compressor_name": "s2"
+        "compressor_name": "2x2_s2",
+        "image_token_id": 151655,
+        "video_token_id": 151656,
+        "padding_token_id": 151643,
+        "spatial_merge_size": 2
     },
     "rope_scaling": {
         "type": "mrope",

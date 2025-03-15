@@ -1073,9 +1073,6 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
 
-        ## NOTE: compressor
-        self.compressor_config = CompressorConfig(**self.config.compressor_config, hidden_size=self.config.hidden_size)
-        self.compressor = OptionalCompressor(self.compressor_config)
         self.post_init()
 
     def get_input_embeddings(self):
@@ -1423,6 +1420,8 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
 
     def __init__(self, config):
         super().__init__(config)
+        ## NOTE: compressor
+        self.compressor = OptionalCompressor._from_config(config.compressor_config)
         self.visual = Qwen2VisionTransformerPretrainedModel._from_config(config.vision_config)
         self.model = Qwen2VLModel(config)
         self.vocab_size = config.vocab_size
@@ -1686,43 +1685,72 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         if inputs_embeds is None:
-            inputs_embeds = self.model.embed_tokens(input_ids)
-            if pixel_values is not None:
-                pixel_values = pixel_values.type(self.visual.get_dtype())
-                image_embeds = self.visual(pixel_values, grid_thw=image_grid_thw)
-                n_image_tokens = (input_ids == self.config.image_token_id).sum().item()
-                n_image_features = image_embeds.shape[0]
-                if n_image_tokens != n_image_features:
-                    raise ValueError(
-                        f"Image features and image tokens do not match: tokens: {n_image_tokens}, features {n_image_features}"
-                    )
-                image_mask = (
-                    (input_ids == self.config.image_token_id)
-                    .unsqueeze(-1)
-                    .expand_as(inputs_embeds)
-                    .to(inputs_embeds.device)
-                )
-                image_embeds = image_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
-                inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
+            if pixel_values is not None or pixel_values_videos is not None:     # 同时包含视觉和文本内容
+                if compress:        # 启用压缩，恢复策略
+                    if pixel_values is not None and pixel_values_videos is not None:
+                        pixel_values = torch.cat([pixel_values, pixel_values_videos], dim=0)
+                        grid_thw = torch.cat(image_grid_thw, video_grid_thw)
+                    elif pixel_values_videos is not None:
+                        pixel_values = pixel_values_videos
+                        grid_thw = video_grid_thw
+                    compress_output, origin_data = self.compressor(pixel_values=pixel_values, grid_thw=grid_thw, input_ids=position_ids, position_ids=position_ids, attention_mask=attention_mask, labels=labels, scale=scale)
+                    pixel_values, grid_thw, input_ids, position_ids, attention_mask, cu_seqlens_q, max_seqlen_q, labels = compress_output
+                    if scale:
+                        pixel_values_ori, grid_thw_ori, input_ids_ori, position_ids_ori, attention_mask_ori, labels_ori = origin_data
+                        ## TODO: scale function
+                    inputs_embeds = self.model.embed_tokens(input_ids)
+                    pixel_values = pixel_values.type(self.visual.get_dtype())
+                    visual_embeds = self.visual(pixel_values, grid_thw=grid_thw)
 
-            if pixel_values_videos is not None:
-                pixel_values_videos = pixel_values_videos.type(self.visual.get_dtype())
-                video_embeds = self.visual(pixel_values_videos, grid_thw=video_grid_thw)
-                n_video_tokens = (input_ids == self.config.video_token_id).sum().item()
-                n_video_features = video_embeds.shape[0]
-                if n_video_tokens != n_video_features:
-                    raise ValueError(
-                        f"Video features and video tokens do not match: tokens: {n_video_tokens}, features {n_video_features}"
-                    )
-                video_mask = (
-                    (input_ids == self.config.video_token_id)
-                    .unsqueeze(-1)
-                    .expand_as(inputs_embeds)
-                    .to(inputs_embeds.device)
-                )
-                video_embeds = video_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
-                inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
+                    visual_mask = torch.isin(input_ids, [self.config.image_token_id, self.config.video_token_id])
 
+                    n_visual_tokens = visual_mask.sum().item()
+                    n_visual_features = visual_embeds.shape[0]
+
+                    if n_visual_tokens != n_visual_features:
+                        raise ValueError(f"Visual features and visual tokens do not match: tokens: {n_visual_tokens}, features {n_visual_features}")
+                    visual_mask = visual_mask.unsqueeze(-1).expand_as(inputs_embeds).to(inputs_embeds.device)
+                    visual_embeds = visual_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
+
+                    inputs_embeds = inputs_embeds.masked_scatter(visual_mask, visual_embeds)
+                else:       # 不启用压缩，恢复策略
+                    if pixel_values is not None:
+                        pixel_values = pixel_values.type(self.visual.get_dtype())
+                        image_embeds = self.visual(pixel_values, grid_thw=image_grid_thw)
+                        n_image_tokens = (input_ids == self.config.image_token_id).sum().item()
+                        n_image_features = image_embeds.shape[0]
+                        if n_image_tokens != n_image_features:
+                            raise ValueError(
+                                f"Image features and image tokens do not match: tokens: {n_image_tokens}, features {n_image_features}"
+                            )
+                        image_mask = (
+                            (input_ids == self.config.image_token_id)
+                            .unsqueeze(-1)
+                            .expand_as(inputs_embeds)
+                            .to(inputs_embeds.device)
+                        )
+                        image_embeds = image_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
+                        inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
+
+                    if pixel_values_videos is not None:
+                        pixel_values_videos = pixel_values_videos.type(self.visual.get_dtype())
+                        video_embeds = self.visual(pixel_values_videos, grid_thw=video_grid_thw)
+                        n_video_tokens = (input_ids == self.config.video_token_id).sum().item()
+                        n_video_features = video_embeds.shape[0]
+                        if n_video_tokens != n_video_features:
+                            raise ValueError(
+                                f"Video features and video tokens do not match: tokens: {n_video_tokens}, features {n_video_features}"
+                            )
+                        video_mask = (
+                            (input_ids == self.config.video_token_id)
+                            .unsqueeze(-1)
+                            .expand_as(inputs_embeds)
+                            .to(inputs_embeds.device)
+                        )
+                        video_embeds = video_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
+                        inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
+            else:       # 纯文本内容
+                inputs_embeds = self.model.embed_tokens(input_ids)
             if attention_mask is not None:
                 attention_mask = attention_mask.to(inputs_embeds.device)
 

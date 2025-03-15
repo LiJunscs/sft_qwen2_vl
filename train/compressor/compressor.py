@@ -9,9 +9,12 @@ from .base_compressor import BaseCompressor, IdentityCompressor, S2Compressor
 class CompressorConfig(PretrainedConfig):
     model_type = "compressor_config"
 
-    def __init__(self, compressor_name: str, **kwargs):
+    def __init__(self, compressor_name: str, image_token_id: int, video_token_id: int, padding_token_id: int, **kwargs):
         super().__init__(**kwargs)
         self.compressor_name = compressor_name
+        self.image_token_id = image_token_id
+        self.video_token_id = video_token_id
+        self.padding_token_id = padding_token_id
         for key, item in kwargs.items():
             setattr(self, str(key), item)
 
@@ -27,7 +30,7 @@ class OptionalCompressor(PreTrainedModel):
 
         if self.compressor_name == "s2":
             self.layers = nn.Sequential(
-                S2Compressor(image_token_id=kwargs["image_token_id"], video_token_id=kwargs["video_token_id"]),
+                S2Compressor(),
                 nn.LayerNorm(config.hidden_size * 4),
                 nn.Linear(config.hidden_size * 4, config.hidden_size),
                 nn.GELU(),
@@ -42,7 +45,7 @@ class OptionalCompressor(PreTrainedModel):
         else:
             origin_data = None
         compressor_layer = self.layers[0]
-        pixel_values, grid_thw, input_ids, position_ids, attention_mask, cu_seqlens_q, max_seqlen_q, labels = compressor_layer(
+        pixel_values, grid_thw, input_ids, position_ids, attention_mask, labels = compressor_layer(
             pixel_values=pixel_values,
             grid_thw=grid_thw,
             input_ids=input_ids,
@@ -53,6 +56,6 @@ class OptionalCompressor(PreTrainedModel):
         hidden_state = pixel_values
         for layer in self.layers[1:]:
             hidden_state = layer(hidden_state)
-        return ((hidden_state, grid_thw, input_ids, position_ids, attention_mask, cu_seqlens_q, max_seqlen_q, labels), origin_data)
+        return ((hidden_state, grid_thw, input_ids, position_ids, attention_mask, labels), origin_data)
 
 

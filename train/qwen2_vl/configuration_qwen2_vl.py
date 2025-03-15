@@ -16,6 +16,7 @@
 
 from transformers.configuration_utils import PretrainedConfig
 from transformers.modeling_rope_utils import rope_config_validation
+from compressor.compressor import CompressorConfig
 
 
 class Qwen2VLVisionConfig(PretrainedConfig):
@@ -157,7 +158,7 @@ class Qwen2VLConfig(PretrainedConfig):
     ```"""
 
     model_type = "qwen2_vl"
-    sub_configs = {"vision_config": Qwen2VLVisionConfig}
+    sub_configs = {"vision_config": Qwen2VLVisionConfig, "compressor_config": CompressorConfig}
     keys_to_ignore_at_inference = ["past_key_values"]
 
     def __init__(
@@ -180,6 +181,7 @@ class Qwen2VLConfig(PretrainedConfig):
         max_window_layers=80,
         attention_dropout=0.0,
         vision_config=None,
+        compressor_config=None,
         rope_scaling=None,
         **kwargs,
     ):
@@ -187,6 +189,11 @@ class Qwen2VLConfig(PretrainedConfig):
             self.vision_config = Qwen2VLVisionConfig(**vision_config)
         elif vision_config is None:
             self.vision_config = Qwen2VLVisionConfig()
+        
+        if isinstance(compressor_config, dict):
+            self.compressor_config = CompressorConfig(**compressor_config)
+        elif compressor_config is None:
+            self.compressor_config = CompressorConfig("Identity")
 
         self.vocab_size = vocab_size
         self.max_position_embeddings = max_position_embeddings

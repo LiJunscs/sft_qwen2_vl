@@ -3,6 +3,7 @@ from dataclasses import field
 import torch
 from torch import nn
 from typing import Optional, Dict
+from torch.nn import functional as F
 
 
 class BaseCompressor(nn.Module):
@@ -53,10 +54,12 @@ def flat_square_3x3(x):
 class S2Compressor(BaseCompressor):
     compressor_name: str = "2x2_S2"
 
-    def __init__(self, image_token_id: int, video_token_id: int):
+    def __init__(self, image_token_id: int, video_token_id: int, spatial_merge_size: int, padding_token_id: int):
         super().__init__()
         self.image_token_id = image_token_id
         self.video_token_id = video_token_id
+        self.spatial_merge_size = spatial_merge_size
+        self.padding_token_id = padding_token_id
 
     def flat_square_2x2(self, x: torch.Tensor, thw: torch.Tensor):
         _, c = x.shape
@@ -73,6 +76,8 @@ class S2Compressor(BaseCompressor):
         x = x.permute(0, 2, 1, 3).contiguous()
         x = x.view(t, int(w / 2), int(h / 2), int(c * 4))
         x = x.permute(0, 2, 1, 3).contiguous()
+        t, h, w, c = x.shape
+        x = x.view(-1, c)
         return x
 
     def forward(self, pixel_values: torch.Tensor, grid_thw: torch.Tensor, input_ids: torch.LongTensor, position_ids: torch.LongTensor, attention_mask: torch.Tensor, labels: Optional[torch.Tensor] = None, *kwargs) -> Dict[str, torch.Tensor]:
@@ -103,21 +108,23 @@ class S2Compressor(BaseCompressor):
         position_ids_compressed = []
         pixel_values_compressed = []
         grid_thw_compressed = []
+        attention_mask_compressed = []
         if labels is not None:
             labels_compressed = []
+
         last_media = 0
         device = input_ids.device
         batch, seqlen = input_ids.shape
 
-        cu_seqlens_q = [0]
-        max_seqlen_q = 0
+        max_padding_length = 0
         for i in range(batch):
             thw = grid_thw[i]
+            t, h, w = thw[0], thw[1], thw[2]
             n_visual_tokens = t * h * w
             visual_compressed = self.flat_square_2x2(pixel_values[last_media : last_media + n_visual_tokens], thw=thw)
+            last_media += n_visual_tokens
             pixel_values_compressed.append(visual_compressed)
             # 处理thw, input_ids中的visual_pad, position_ids, labels
-            t, h, w = thw[0], thw[1], thw[2]
             grid_thw_compressed.append(torch.tensor([t, h // 2, w //2], device=device, dtype=torch.int32))
             if t == 1:
                 # 图片
@@ -129,24 +136,13 @@ class S2Compressor(BaseCompressor):
                 mask[: image_start] = True
                 mask[selectec_indices] = True
                 mask[image_end + 1 : ] = True
-                # 根据attention_mask去掉padding部分
-                mask[~attention_mask[i]] = False
+                # 去掉padding的token
+                mask[attention_mask[i] == 0] = False
 
-                tokens = input_ids[i][mask]
-                q_len = tokens.shape[0]
-                cu_seqlens_q.append(q_len)
-                max_seqlen_q = max(max_seqlen_q, q_len)
-                input_ids_compressed.append(tokens)
 
-                # position_ids = shape(3, batch, seqlen, hidden)
-                position_ids_compressed.append(position_ids[:, i, mask])
-
-                # label = shape (batch, seqlen)
-                if labels is not None:
-                    labels_compressed.append(labels[i][mask])
             else:
                 # 视频
-                video_token_indices = (input_ids[i] == self.video_token_id).squeeze()
+                video_token_indices = torch.nonzero((input_ids[i] == self.video_token_id)).squeeze()
                 video_start = video_token_indices[0]
                 video_end = video_token_indices[-1]
 
@@ -155,42 +151,120 @@ class S2Compressor(BaseCompressor):
                 mask[: video_start] = True
                 mask[selectec_indices] = True
                 mask[video_end + 1 : ] = True
-                # 根据attention_mask去掉padding部分
-                mask[~attention_mask[i]] = False
+                # 去掉padding的token
+                mask[attention_mask[i] == 0] = False
 
-                tokens = input_ids[i][mask]
-                q_len = tokens.shape[0]
-                cu_seqlens_q.append(q_len)
-                max_seqlen_q = max(max_seqlen_q, q_len)
-                input_ids_compressed.append(tokens)
+            
+            input_ids_compressed_i = input_ids[i][mask]
+            input_ids_compressed.append(input_ids_compressed_i)
+            q_len = input_ids_compressed_i.shape[0]
 
-                # position_ids = shape(3, batch, seqlen)
-                position_ids_compressed.append(position_ids[:, i, mask])
+            max_padding_length = max(max_padding_length, q_len)
 
-                # label = shape (batch, seqlen)
+            # position_ids = shape(3, batch, seqlen)
+            position_ids_compressed_i = position_ids[:, i, mask]
+            position_ids_compressed.append(position_ids_compressed_i)
+            # attention_mask = shape(batch, seqlen)
+            attention_mask_compressed_i = attention_mask[i, mask]
+            attention_mask_compressed.append(attention_mask_compressed_i)
+            # label = shape (batch, seqlen)
+            if labels is not None:
+                labels_compressed_i = labels[i, mask]
+                labels_compressed.append(labels_compressed_i)
+            
+
+        for i in range(batch):
+            input_ids_compressed_i = input_ids_compressed[i]
+            position_ids_compressed_i = position_ids_compressed[i]
+            attention_mask_compressed_i = attention_mask_compressed[i]
+            if labels is not None:
+                labels_compressed_i = labels_compressed[i]
+            q_len = input_ids_compressed_i.shape[0]
+            if q_len >= max_padding_length:
+                input_ids_compressed_i = input_ids_compressed_i[-max_padding_length:]
+                position_ids_compressed_i = position_ids_compressed_i[:, -max_padding_length:]
+                attention_mask_compressed_i = attention_mask_compressed_i[-max_padding_length:]
                 if labels is not None:
-                    labels_compressed.append(labels[i][mask])
-        # 将全部的tensor在seqlen维度拼接，避免大量的padding, 后期使用flash_attn_varlen计算
+                    labels_compressed_i = labels_compressed_i[:, -max_padding_length]
+            else:
+                input_ids_compressed_i = torch.cat([torch.full((max_padding_length - q_len, ), self.padding_token_id, device=device, dtype=torch.int32), input_ids_compressed_i], dim=0)
+                position_ids_compressed_i = torch.cat([torch.full((3, max_padding_length - q_len, ), 0, device=device, dtype=torch.int64), position_ids_compressed_i], dim=1)
+                attention_mask_compressed_i = torch.cat([torch.full((max_padding_length - q_len, ), 0, device=device, dtype=torch.int32), attention_mask_compressed_i], dim=0)
+                if labels is not None:
+                    labels_compressed_i = torch.cat([torch.full((max_padding_length - q_len, ), -100, device=device, dtype=torch.int32), labels_compressed_i], dim=0)
+                
+            input_ids_compressed[i] = input_ids_compressed_i
+            position_ids_compressed[i] = position_ids_compressed_i
+            attention_mask_compressed[i] = attention_mask_compressed_i
+            if labels is not None:
+                labels_compressed[i] = labels_compressed_i
+ 
+
         pixel_values_compressed = torch.cat(pixel_values_compressed, dim=0)
         grid_thw_compressed = torch.stack(grid_thw_compressed, dim=0)
 
-        input_ids_compressed = torch.cat(input_ids_compressed, dim=0)
-        input_ids_compressed = input_ids_compressed.unsqueeze(dim=0)
-        input_ids_compressed = input_ids_compressed.contiguous()
+        input_ids_compressed = torch.stack(input_ids_compressed, dim=0)
+        input_ids_compressed = input_ids_compressed.contiguous()                    # shape (batch, max_padding_length)
 
-        position_ids_compressed = torch.cat(position_ids_compressed, dim=-1)
-        position_ids_compressed = position_ids_compressed.unsqueeze(dim=1)
-        position_ids_compressed = position_ids_compressed.contiguous()
+        position_ids_compressed = torch.stack(position_ids_compressed, dim=1)
+        position_ids_compressed = position_ids_compressed.contiguous()              # shape (3, batch, max_padding_length)
 
-        cu_seqlens_q = torch.tensor(cu_seqlens_q, device=device, dtype=torch.int64).cumsum(dim=0)
+        attention_mask_compressed = torch.stack(attention_mask_compressed, dim=0)
+        attention_mask_compressed = attention_mask_compressed.contiguous()          # shape (batch, max_padding_length)
 
-        if labels_compressed is not None:
-            labels_compressed = torch.cat(labels_compressed, dim=0)
-            labels_compressed = labels_compressed.unsqueeze(dim=0)
+        if labels is not None:
+            labels_compressed = torch.stack(labels_compressed, dim=0)               # shape (batch, max_padding_length)
             labels_compressed = labels_compressed.contiguous()
-        if labels is None:
+        else:
             labels_compressed = None
-        return pixel_values_compressed, grid_thw_compressed, input_ids_compressed, position_ids_compressed, None, cu_seqlens_q, max_seqlen_q, labels_compressed
+        return pixel_values_compressed, grid_thw_compressed, input_ids_compressed, position_ids_compressed, attention_mask_compressed, labels_compressed
 
+
+if __name__ =="__main__":
+    config = {
+        "image_token_id": 151655,
+        "video_token_id": 151656,
+        "padding_token_id": 151643,
+        "spatial_merge_size": 2,
+    }
+
+    # 对长度不够的 tensor 进行左填充
+    def left_pad(tensor, max_length, pad_value):
+        pad_length = max_length - tensor.size(0)
+        if pad_length > 0:
+            padding = torch.full((pad_length,), pad_value, dtype=tensor.dtype, device=tensor.device)
+            return torch.cat((padding, tensor), dim=0)
+        return tensor
+    # 根据填充情况生成 attention_mask
+    def generate_attention_mask(tensor, pad_value):
+        return (tensor != pad_value).to(torch.int32)
+    
+    compressor = S2Compressor(**config)
+    n_tokens = 10 * 8 * 8 + 5 * 4 * 4
+    hidden = 10
+    grid_thw = torch.tensor([[10, 8, 8], [5, 4, 4]], device="cuda", dtype=torch.int32)
+    pixel_values = torch.randint(0, 10, (n_tokens, hidden), device="cuda", dtype=torch.int32)
+
+    pre_prompt = torch.randint(0, 100, (10, ), device="cuda", dtype=torch.int32)
+    post_prompt = torch.randint(0, 100, (10, ), device="cuda", dtype=torch.int32)
+    tensor_1 = torch.full((160,), config["video_token_id"], dtype=torch.int32, device="cuda")
+    tensor_1 = torch.cat([pre_prompt, tensor_1, post_prompt], dim=0)
+    tensor_2 = torch.full((20,), config["video_token_id"],dtype=torch.int32, device="cuda")
+    tensor_2 = torch.cat([pre_prompt, tensor_2, post_prompt], dim=0)
+
+    max_length = 180
+    pad_value = 151643
+    tensor_2 = left_pad(tensor_2, max_length, pad_value)
+
+    input_ids = torch.stack([tensor_1, tensor_2], dim=0)
+    attention_mask = generate_attention_mask(input_ids, pad_value)
+
+    position_ids = torch.randint(0, 10000, (3, 2, max_length), device="cuda", dtype=torch.int64)
+
+    out = compressor(pixel_values, grid_thw, input_ids, position_ids, attention_mask)
+    print()
+
+    
+    
 
 
