@@ -1,11 +1,11 @@
 import base64
 from io import BytesIO
 import decord
+from transformers import AutoProcessor, Qwen2VLForConditionalGeneration
 from PIL import Image
 from qwen_vl_utils import process_vision_info
 import numpy as np
 import torch
-from transformers import AutoProcessor
 from typing import List, Union, Optional
 
 
@@ -53,17 +53,19 @@ def process_data(contexts: List[str], visuals: List[Union[Image.Image, str]], pr
                 answer = answer.replace("<image>", "")
             assistant = {"role": "assistant", "content": answer}
             message.append(assistant)
-            messages.append(message)
+        messages.append(message)
     texts = [processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True) for msg in messages]
     image_inputs, video_inputs = process_vision_info(messages)
     if video_inputs is not None:
-                total_frames = video_inputs[0].shape[0]
-                if total_frames > max_num_frames:
-                    indices = np.linspace(0, total_frames - 1, max_num_frames, dtype=int)
-                    # Append the last frame index if not already included
-                    if total_frames - 1 not in indices:
-                        indices = np.append(indices, total_frames - 1)
-                    video_inputs[0] = video_inputs[0][indices]
+        for video_input in video_inputs:
+            total_frames = video_input.shape[0]
+            if total_frames > max_num_frames:
+                indices = np.linspace(0, total_frames - 1, max_num_frames, dtype=int)
+                # Append the last frame index if not already included
+                if total_frames - 1 not in indices:
+                    indices = np.append(indices, total_frames - 1)
+                video_input = video_input[indices]
+                video_inputs[0] = video_input
     inputs = processor(text=texts, images=image_inputs, videos=video_inputs, padding=True, return_tensors="pt")
     if sft:
         labels_mask = get_assistant_mask(input_ids=inputs.input_ids, processor=processor)
@@ -94,3 +96,15 @@ def get_assistant_mask(input_ids: torch.Tensor, processor: AutoProcessor):
     mask = torch.ones(batch, seqlen, device=input_ids.device, dtype=torch.bool)
     mask[:, im_start_assistance : im_end_assistance + 1] = False
     return mask
+
+if __name__ == "__main__":
+    model = Qwen2VLForConditionalGeneration.from_pretrained("/home/lijun2/multimodal/checkpoints/Qwen2-VL-7B-Instruct", torch_dtype=torch.float16, device_map="auto", attn_implementation="flash_attention_2").eval()
+    qwen_processor = AutoProcessor.from_pretrained("/home/lijun2/multimodal/checkpoints/Qwen2-VL-7B-Instruct")
+    contexts = ["Hello", "Who are you", "Thank you", "Good luck"]
+    img1 = Image.open("/data/public/multimodal/yuanziqi/datasets/pretraining_datasets/OCR-VQA-200K/images_o/B016X4I0JY.jpg")
+    img2 = Image.open("/data/public/multimodal/yuanziqi/datasets/pretraining_datasets/OCR-VQA-200K/images_o/B0170JXKQE.jpg")
+    visuals = [img1, img2, "/home/lijun2/multimodal/dataset/video-mme/videomme/data/zxKPjD8urG4.mp4", "/home/lijun2/multimodal/dataset/video-mme/videomme/data/ZXoaMa6jlO4.mp4"]
+    inputs = process_data(contexts=contexts, visuals=visuals, processor=qwen_processor)
+    inputs = inputs.to("cuda")
+    outputs = model.generate(**inputs, max_new_tokens=32, use_cache=True, output_attentions=False, output_hidden_states=False)
+    print()

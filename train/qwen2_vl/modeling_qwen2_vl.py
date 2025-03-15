@@ -1037,6 +1037,7 @@ class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
         return rotary_pos_emb
 
     def forward(self, hidden_states: torch.Tensor, grid_thw: torch.Tensor) -> torch.Tensor:
+        # hidden size的改变(seqlen, 1176) -> (seqlen, 1280)
         hidden_states = self.patch_embed(hidden_states)
         rotary_pos_emb = self.rot_pos_emb(grid_thw)
 
@@ -1635,6 +1636,8 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
         image_grid_thw: Optional[torch.LongTensor] = None,
         video_grid_thw: Optional[torch.LongTensor] = None,
         rope_deltas: Optional[torch.LongTensor] = None,
+        compress: bool = False,
+        scale: bool = False,
     ) -> Union[Tuple, Qwen2VLCausalLMOutputWithPast]:
         r"""
         Args:
@@ -1701,21 +1704,6 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
                 )
                 image_embeds = image_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
                 inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
-                ## 压缩视觉信息
-                visual_start_idx = (input_ids == self.config.vision_start_token_id).nonzero()[0][1] + 1
-                visual_end_idx = visual_start_idx + n_image_features - 1
-                ## NOTE: 仅作为测试使用处理多张图片，并且假设每张图片大小都相同，后续将会修改
-                image_grid_thw[0, 0] = image_grid_thw[0, 0] * image_grid_thw.shape[0] 
-                inputs_embeds, position_ids, attention_mask, labels = self.frames_compress_then_scale(
-                    input_embeds=inputs_embeds, 
-                    visual_start=visual_start_idx, 
-                    visual_end=visual_end_idx + 1, 
-                    video_grid_thw=image_grid_thw, 
-                    attention_mask=attention_mask, 
-                    position_ids=position_ids, 
-                    compress_func=self.model.compressor,
-                    labels=labels,
-                )
 
             if pixel_values_videos is not None:
                 pixel_values_videos = pixel_values_videos.type(self.visual.get_dtype())
@@ -1734,19 +1722,6 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
                 )
                 video_embeds = video_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
                 inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
-                ## 压缩视觉信息
-                video_start_idx = (input_ids == self.config.vision_start_token_id).nonzero()[0][1] + 1
-                video_end_idx = video_start_idx + n_video_features - 1
-                inputs_embeds, position_ids, attention_mask, labels = self.frames_compress_then_scale(
-                    input_embeds=inputs_embeds, 
-                    visual_start=video_start_idx, 
-                    visual_end=video_end_idx + 1, 
-                    video_grid_thw=video_grid_thw, 
-                    attention_mask=attention_mask, 
-                    position_ids=position_ids, 
-                    compress_func=self.model.compressor,
-                    labels=labels
-                )
 
             if attention_mask is not None:
                 attention_mask = attention_mask.to(inputs_embeds.device)

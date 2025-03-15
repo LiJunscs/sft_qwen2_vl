@@ -27,7 +27,7 @@ class OptionalCompressor(PreTrainedModel):
 
         if self.compressor_name == "s2":
             self.layers = nn.Sequential(
-                S2Compressor(),
+                S2Compressor(image_token_id=kwargs["image_token_id"], video_token_id=kwargs["video_token_id"]),
                 nn.LayerNorm(config.hidden_size * 4),
                 nn.Linear(config.hidden_size * 4, config.hidden_size),
                 nn.GELU(),
@@ -36,19 +36,23 @@ class OptionalCompressor(PreTrainedModel):
         else:
             self.layers = nn.Sequential(IdentityCompressor())
     
-    def forward(self, input_embeds, position_ids, attention_mask, labels, **kwargs):
-        visual_start = kwargs["visual_start"]
-        visual_end = kwargs["visual_end"]
-        video_grid_thw = kwargs["video_grid_thw"]
-
-        visual_part = input_embeds[:, visual_start: visual_end]
-
-        visual_part, position_ids, attention_mask, labels, n_token_per_frames_compressed = self.layers[0](visual_part, position_ids, attention_mask, labels, **kwargs)
+    def forward(self, pixel_values: torch.Tensor, grid_thw: torch.Tensor, input_ids: torch.Tensor, position_ids, attention_mask, labels=None, scale: bool = False, **kwargs):
+        if scale:
+            origin_data = (pixel_values, grid_thw, input_ids, position_ids, attention_mask, labels)
+        else:
+            origin_data = None
+        compressor_layer = self.layers[0]
+        pixel_values, grid_thw, input_ids, position_ids, attention_mask, cu_seqlens_q, max_seqlen_q, labels = compressor_layer(
+            pixel_values=pixel_values,
+            grid_thw=grid_thw,
+            input_ids=input_ids,
+            position_ids=position_ids,
+            attention_mask=attention_mask,
+            **kwargs
+        )
+        hidden_state = pixel_values
         for layer in self.layers[1:]:
-            visual_part = layer(visual_part)
-        input_embeds = torch.cat([input_embeds[:, :visual_start], visual_part, input_embeds[:, visual_end:]], dim=1)
-        input_embeds = input_embeds.contiguous()
-        return input_embeds, position_ids, attention_mask, labels, n_token_per_frames_compressed
-
+            hidden_state = layer(hidden_state)
+        return ((hidden_state, grid_thw, input_ids, position_ids, attention_mask, cu_seqlens_q, max_seqlen_q, labels), origin_data)
 
 
