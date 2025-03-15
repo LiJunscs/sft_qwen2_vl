@@ -1695,7 +1695,7 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
                         grid_thw = video_grid_thw
                     else:
                         grid_thw = image_grid_thw
-                    compress_output, origin_data = self.compressor(pixel_values=pixel_values, grid_thw=grid_thw, input_ids=position_ids, position_ids=position_ids, attention_mask=attention_mask, labels=labels, scale=scale)
+                    compress_output, origin_data = self.compressor(pixel_values=pixel_values, grid_thw=grid_thw, input_ids=input_ids, position_ids=position_ids, attention_mask=attention_mask, labels=labels, scale=scale)
                     pixel_values, grid_thw, input_ids, position_ids, attention_mask, cu_seqlens_q, max_seqlen_q, labels = compress_output
                     if scale:
                         pixel_values_ori, grid_thw_ori, input_ids_ori, position_ids_ori, attention_mask_ori, labels_ori = origin_data
