@@ -1,0 +1,4 @@
+---
+videochat_flash_pretrain:
+    - llava_pretrain
+    - smit

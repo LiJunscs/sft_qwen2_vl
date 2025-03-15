@@ -1,0 +1,16 @@
+---
+dummy:
+    _target_: src.data.DummyDataset
+    num_instances: 10000
+    comments: dummy dataset for testing
+
+llava_pretrain:
+    _target_: src.data.LLaVADataset
+    data_path: /home/yuanziqi/Work25/VILA-main/playground/data/LLaVA-Pretrain/blip_laion_cc_sbu_558k.json
+    media_dir: /home/yuanziqi/Work25/VILA-main/playground/data/LLaVA-Pretrain
+    
+smit:
+    _target_: src.data.LLaVADataset
+    data_path: /data/public/multimodal/yuanziqi/datasets/pretraining_datasets/VideoChat-Flash-Training-Data/annotations/video/smit_caption_481k.json
+    media_dir: /data/public/multimodal/yuanziqi/datasets/pretraining_datasets/S-MiT
+    is_video: true
