@@ -55,6 +55,8 @@ class CustomDataset(Dataset):
                         visual_path = Image.open(visual_path)
                     elif isinstance(item["image"], Image.Image):
                         visual_path = item["image"]
+                    elif isinstance(item["image"], list) and all(isinstance(img, Image.Image) for img in item["image"]):
+                        visual_path = item["image"]
                     if data_args.repeat > 1:
                         visual_list = [visual_path]
                         visual_copy = [visual_path.copy() for _ in range(data_args.repeat - 1)]
@@ -79,21 +81,21 @@ class CustomDataset(Dataset):
                     if not video_name.endswith(".mp4"):
                         video_name += ".mp4"
                     visual_path = os.path.join(video_dir_path, video_name)
-                if visual_path is not None and not isinstance(visual_path, list):
-                    visual_path = [visual_path]
+                # if visual_path is not None and not isinstance(visual_path, list):
+                #     visual_path = [visual_path]
 
-                text = []
-                labels = []
-                answer = []
+                text = None
+                labels = None
+                answer = None
                 for conv in item["conversations"]:
                     role = conv["from"]
                     if role == "human":
                         if "image" in item:
-                            text.append(self.image_pre_prompt + conv["value"] + self.post_prompt)
+                            text = self.image_pre_prompt + conv["value"] + self.post_prompt
                         elif "video" in item:
-                            text.append(self.video_pre_prompt + conv["value"] + self.post_prompt)
+                            text = self.video_pre_prompt + conv["value"] + self.post_prompt
                     elif role == "gpt":
-                        answer.append(conv["value"])
+                        answer = conv["value"]
                     else:
                         raise RuntimeError
 

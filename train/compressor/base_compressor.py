@@ -54,7 +54,7 @@ def flat_square_3x3(x):
 class S2Compressor(BaseCompressor):
     compressor_name: str = "2x2_S2"
 
-    def __init__(self, image_token_id: int, video_token_id: int, spatial_merge_size: int, padding_token_id: int):
+    def __init__(self, image_token_id: int, video_token_id: int, padding_token_id: int, spatial_merge_size: int, ):
         super().__init__()
         self.image_token_id = image_token_id
         self.video_token_id = video_token_id
@@ -125,7 +125,7 @@ class S2Compressor(BaseCompressor):
             last_media += n_visual_tokens
             pixel_values_compressed.append(visual_compressed)
             # 处理thw, input_ids中的visual_pad, position_ids, labels
-            grid_thw_compressed.append(torch.tensor([t, h // 2, w //2], device=device, dtype=torch.int32))
+            grid_thw_compressed.append(torch.tensor([t, (h + 1) // 2, (w + 1) // 2], device=device, dtype=torch.int32))
             if t == 1:
                 # 图片
                 image_token_indices = (input_ids[i] == self.image_token_id).squeeze()

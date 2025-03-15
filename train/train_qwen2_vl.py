@@ -104,7 +104,12 @@ def cleanup():
     dist.destroy_process_group()
 
 def collator_fn(batch):
-    return batch
+    new_batch = {"text": [], "visuals": [], "answer": []}
+    for item in batch:
+        new_batch["text"].append(item["text"])
+        new_batch["visuals"].append(item["visuals"])
+        new_batch["answer"].append(item["answer"])
+    return new_batch
 
 def pretrain_loss_func(logits: torch.Tensor, labels: torch.Tensor, vocab_size: int):
     loss = None
@@ -149,7 +154,6 @@ def train(train_args: TrainingArgumentsCustom, model_args, data_args):
     model, tokenizer, processor = get_model(model_args=model_args, train_args=train_args)
     model.to(rank)
     optimizer, lr_schedulers = get_optimizer(model, train_args)
-    lr_0: CosineAnnealingLR = lr_schedulers[0]
     ddp_model = DDP(module=model, device_ids=[rank])
 
 
@@ -164,9 +168,9 @@ def train(train_args: TrainingArgumentsCustom, model_args, data_args):
         train_sampler.set_epoch(epoch)
         ddp_model.train()
         for i, item in enumerate(train_dataloader):
-            contexts = item[0]["text"]
-            visuals = item[0]["visuals"]
-            answers = item[0]["answer"]
+            contexts = item["text"]
+            visuals = item["visuals"]
+            answers = item["answer"]
             inputs = process_data(contexts=contexts, answers=answers, visuals=visuals, processor=processor, max_num_frames=model_args.max_num_frames, max_pixels=model_args.max_pixels, sft=True)
             inputs = inputs.to(rank)
             labels = inputs.labels
@@ -175,7 +179,8 @@ def train(train_args: TrainingArgumentsCustom, model_args, data_args):
             # prefill 
             inputs = ddp_model.module.prepare_inputs_for_generation(**inputs, max_new_tokens=model_args.max_new_tokens, use_cache=True, cache_position=cache_position)
             inputs.update({
-                "labels": labels
+                "labels": labels,
+                "compress": True
             })
             outputs = ddp_model(**inputs, output_attentions=False, output_hidden_states=False)
             logits = outputs.logits

@@ -45,7 +45,8 @@
         "image_token_id": 151655,
         "video_token_id": 151656,
         "padding_token_id": 151643,
-        "spatial_merge_size": 2
+        "spatial_merge_size": 2,
+        "hidden_size": 3584
     },
     "rope_scaling": {
         "type": "mrope",

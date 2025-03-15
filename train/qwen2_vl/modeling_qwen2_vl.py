@@ -1421,7 +1421,7 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
     def __init__(self, config):
         super().__init__(config)
         ## NOTE: compressor
-        self.compressor = OptionalCompressor._from_config(config.compressor_config)
+        self.compressor = OptionalCompressor(CompressorConfig(**config.compressor_config))
         self.visual = Qwen2VisionTransformerPretrainedModel._from_config(config.vision_config)
         self.model = Qwen2VLModel(config)
         self.vocab_size = config.vocab_size
@@ -1693,6 +1693,8 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
                     elif pixel_values_videos is not None:
                         pixel_values = pixel_values_videos
                         grid_thw = video_grid_thw
+                    else:
+                        grid_thw = image_grid_thw
                     compress_output, origin_data = self.compressor(pixel_values=pixel_values, grid_thw=grid_thw, input_ids=position_ids, position_ids=position_ids, attention_mask=attention_mask, labels=labels, scale=scale)
                     pixel_values, grid_thw, input_ids, position_ids, attention_mask, cu_seqlens_q, max_seqlen_q, labels = compress_output
                     if scale:

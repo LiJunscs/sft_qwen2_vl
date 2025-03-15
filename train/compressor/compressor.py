@@ -9,12 +9,14 @@ from .base_compressor import BaseCompressor, IdentityCompressor, S2Compressor
 class CompressorConfig(PretrainedConfig):
     model_type = "compressor_config"
 
-    def __init__(self, compressor_name: str, image_token_id: int, video_token_id: int, padding_token_id: int, **kwargs):
+    def __init__(self, compressor_name: str, image_token_id: int, video_token_id: int, padding_token_id: int, spatial_merge_size: int, hidden_size: int, **kwargs):
         super().__init__(**kwargs)
         self.compressor_name = compressor_name
         self.image_token_id = image_token_id
         self.video_token_id = video_token_id
         self.padding_token_id = padding_token_id
+        self.spatial_merge_size = spatial_merge_size
+        self.hidden_size = hidden_size
         for key, item in kwargs.items():
             setattr(self, str(key), item)
 
@@ -28,9 +30,9 @@ class OptionalCompressor(PreTrainedModel):
 
         self.compressor_config = config
 
-        if self.compressor_name == "s2":
+        if self.compressor_name == "2x2_s2":
             self.layers = nn.Sequential(
-                S2Compressor(),
+                S2Compressor(config.image_token_id, config.video_token_id, config.padding_token_id, config.spatial_merge_size),
                 nn.LayerNorm(config.hidden_size * 4),
                 nn.Linear(config.hidden_size * 4, config.hidden_size),
                 nn.GELU(),

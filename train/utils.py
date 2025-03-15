@@ -58,9 +58,10 @@ def get_model(model_args, train_args: Optional[TrainingArgumentsCustom]) -> Tupl
     qwen2_vl_config.torch_dtype = dtype
 
     if load_resume:
-        # weights = load_safetensors_from_dir(dir_path=model_name_or_path)
-        # model.load_state_dict(state_dict=weights, strict=False)
-        model = Qwen2VLForConditionalGeneration.from_pretrained(pretrained_model_name_or_path=model_name_or_path)
+        model = Qwen2VLForConditionalGeneration(config=qwen2_vl_config)
+        weights = load_safetensors_from_dir(dir_path=model_name_or_path)
+        model.load_state_dict(state_dict=weights, strict=False)
+        # model = Qwen2VLForConditionalGeneration.from_pretrained(pretrained_model_name_or_path=model_name_or_path)
         model.to(dtype)
     else:
         model = Qwen2VLForConditionalGeneration(config=qwen2_vl_config)
