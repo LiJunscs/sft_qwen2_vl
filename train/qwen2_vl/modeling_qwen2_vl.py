@@ -1696,7 +1696,7 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
                     else:
                         grid_thw = image_grid_thw
                     compress_output, origin_data = self.compressor(pixel_values=pixel_values, grid_thw=grid_thw, input_ids=input_ids, position_ids=position_ids, attention_mask=attention_mask, labels=labels, scale=scale)
-                    pixel_values, grid_thw, input_ids, position_ids, attention_mask, cu_seqlens_q, max_seqlen_q, labels = compress_output
+                    pixel_values, grid_thw, input_ids, position_ids, attention_mask, labels = compress_output
                     if scale:
                         pixel_values_ori, grid_thw_ori, input_ids_ori, position_ids_ori, attention_mask_ori, labels_ori = origin_data
                         ## TODO: scale function
@@ -1704,7 +1704,7 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
                     pixel_values = pixel_values.type(self.visual.get_dtype())
                     visual_embeds = self.visual(pixel_values, grid_thw=grid_thw)
 
-                    visual_mask = torch.isin(input_ids, [self.config.image_token_id, self.config.video_token_id])
+                    visual_mask = (input_ids == self.config.image_token_id) | (input_ids == self.config.video_token_id)
 
                     n_visual_tokens = visual_mask.sum().item()
                     n_visual_features = visual_embeds.shape[0]

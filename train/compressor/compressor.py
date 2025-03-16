@@ -53,14 +53,12 @@ class OptionalCompressor(PreTrainedModel):
             input_ids=input_ids,
             position_ids=position_ids,
             attention_mask=attention_mask,
+            labels=labels,
             **kwargs
         )
-        hidden_state = pixel_values
-        dtype = hidden_state.dtype
-        hidden_state = hidden_state.float()
+        hidden_state = pixel_values.to(self.layers[1].weight.dtype)
         for layer in self.layers[1:]:
             hidden_state = layer(hidden_state)
-        hidden_state = hidden_state.to(dtype=dtype)
         return ((hidden_state, grid_thw, input_ids, position_ids, attention_mask, labels), origin_data)
 
 

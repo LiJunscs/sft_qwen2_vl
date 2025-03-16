@@ -65,20 +65,22 @@ class S2Compressor(BaseCompressor):
         _, c = x.shape
         t, h, w = thw[0], thw[1], thw[2]
         x = x.view(t, h, w, c)
-        if w % 2 == 1:
-            x = torch.concat([x, torch.zeros((t, h, 1, c), dtype=x.dtype).to(x.device)], dim=1).contiguous()
+        kernel_size = 2 * self.spatial_merge_size
+        if h % kernel_size != 0:
+            x = torch.concat([x, torch.zeros((t, kernel_size - (h % kernel_size), w, c), dtype=x.dtype).to(x.device)], dim=1).contiguous()
             t, h, w, c = x.size()
         x = x.contiguous()
-        if h % 2 == 1:
-            x = torch.concat([x, torch.zeros((t, 1, h, c), dtype=x.dtype).to(x.device)], dim=2).contiguous()
+        if w % kernel_size != 0:
+            x = torch.concat([x, torch.zeros((t, h, kernel_size - (w % kernel_size), c), dtype=x.dtype).to(x.device)], dim=2).contiguous()
             t, h, w, c = x.size()
         x = x.view(t, int(h / 2), w, int(c * 2))
         x = x.permute(0, 2, 1, 3).contiguous()
         x = x.view(t, int(w / 2), int(h / 2), int(c * 4))
         x = x.permute(0, 2, 1, 3).contiguous()
         t, h, w, c = x.shape
+        thw = torch.tensor([t, h, w], device=x.device, dtype=torch.int32)
         x = x.view(-1, c)
-        return x
+        return x, thw
 
     def forward(self, pixel_values: torch.Tensor, grid_thw: torch.Tensor, input_ids: torch.LongTensor, position_ids: torch.LongTensor, attention_mask: torch.Tensor, labels: Optional[torch.Tensor] = None, *kwargs) -> Dict[str, torch.Tensor]:
         """
@@ -99,9 +101,6 @@ class S2Compressor(BaseCompressor):
             max_seqlen_q: int
             labels: Tensor(1, seqlen_compressed_flatten) if labels else None
 
-        NOTE: 
-            1. 压缩后将全部的tensor在seqlen维度拼接, 避免大量的padding, 后期使用flash_attn_varlen计算. 
-            2. 返回值的attention_mask将永远被置为None, 计算flash_attn_varlen的数据将后续手动计算
         """
         ## 处理多batch的情况, 由于pixel_values是经过flatten的, 且batch中每个数据的thw不一定相同, 所以暂时采用循环完成
         input_ids_compressed = []
@@ -119,20 +118,22 @@ class S2Compressor(BaseCompressor):
         max_padding_length = 0
         for i in range(batch):
             thw = grid_thw[i]
-            t, h, w = thw[0], thw[1], thw[2]
+            t, h, w = thw
             n_visual_tokens = t * h * w
-            visual_compressed = self.flat_square_2x2(pixel_values[last_media : last_media + n_visual_tokens], thw=thw)
+            visual_compressed, thw = self.flat_square_2x2(pixel_values[last_media : last_media + n_visual_tokens], thw=thw)
+            t, h, w = thw
             last_media += n_visual_tokens
             pixel_values_compressed.append(visual_compressed)
             # 处理thw, input_ids中的visual_pad, position_ids, labels
-            grid_thw_compressed.append(torch.tensor([t, (h + 1) // 2, (w + 1) // 2], device=device, dtype=torch.int32))
+            grid_thw_compressed.append(thw)
             if t == 1:
                 # 图片
-                image_token_indices = (input_ids[i] == self.image_token_id).squeeze()
+                image_token_indices = torch.nonzero((input_ids[i] == self.image_token_id)).squeeze()
                 image_start = image_token_indices[0]
                 image_end = image_token_indices[-1]
                 mask = torch.zeros(seqlen, device=device, dtype=torch.bool)
-                selectec_indices = torch.arange(image_start, image_end + 1, 4, device=device)
+                ## NOTE: 存在问题，nvila的s2压缩会导致h, w维度顺序的混乱
+                selectec_indices = torch.linspace(image_start, image_end, h  // self.spatial_merge_size * w // self.spatial_merge_size, device=device, dtype=torch.int32)
                 mask[: image_start] = True
                 mask[selectec_indices] = True
                 mask[image_end + 1 : ] = True
@@ -147,7 +148,7 @@ class S2Compressor(BaseCompressor):
                 video_end = video_token_indices[-1]
 
                 mask = torch.zeros(seqlen, device=device, dtype=torch.bool)
-                selectec_indices = torch.arange(video_start, video_end + 1, 4, device=device)
+                selectec_indices = torch.linspace(video_start, video_end,  h  // self.spatial_merge_size * w // self.spatial_merge_size, device=device, dtype=torch.int32)
                 mask[: video_start] = True
                 mask[selectec_indices] = True
                 mask[video_end + 1 : ] = True
@@ -185,7 +186,7 @@ class S2Compressor(BaseCompressor):
                 position_ids_compressed_i = position_ids_compressed_i[:, -max_padding_length:]
                 attention_mask_compressed_i = attention_mask_compressed_i[-max_padding_length:]
                 if labels is not None:
-                    labels_compressed_i = labels_compressed_i[:, -max_padding_length]
+                    labels_compressed_i = labels_compressed_i[-max_padding_length:]
             else:
                 input_ids_compressed_i = torch.cat([torch.full((max_padding_length - q_len, ), self.padding_token_id, device=device, dtype=torch.int32), input_ids_compressed_i], dim=0)
                 position_ids_compressed_i = torch.cat([torch.full((3, max_padding_length - q_len, ), 0, device=device, dtype=torch.int64), position_ids_compressed_i], dim=1)
@@ -220,7 +221,7 @@ class S2Compressor(BaseCompressor):
         return pixel_values_compressed, grid_thw_compressed, input_ids_compressed, position_ids_compressed, attention_mask_compressed, labels_compressed
 
 
-if __name__ =="__main__":
+def test_compressor():
     config = {
         "image_token_id": 151655,
         "video_token_id": 151656,
@@ -263,6 +264,19 @@ if __name__ =="__main__":
 
     out = compressor(pixel_values, grid_thw, input_ids, position_ids, attention_mask)
     print()
+
+def test_flat_square_2x2():
+    t, h, w, c, = 1, 6, 4, 2
+    x = torch.arange(1, t * h * w * c + 1)
+    x = x.view(-1, c)
+    y = x.clone()
+
+    compressor = S2Compressor(1000, 1001, 1002, 2)
+    x, thw = compressor.flat_square_2x2(x, (t, h, w))
+    print()
+
+if __name__ =="__main__":
+    test_flat_square_2x2()
 
     
     
