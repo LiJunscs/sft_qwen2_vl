@@ -1,6 +1,6 @@
 from transformers import AutoProcessor, Qwen2VLForConditionalGeneration
 from PIL import Image
-from train.data.data_preprocess import process_data, get_assistant_mask
+from legacy.data.data_preprocess import process_data, get_assistant_mask
 import torch
 
 def test_process_data():
@@ -25,4 +25,4 @@ def test_get_assistant_mask():
     mask = get_assistant_mask(input_ids, qwen_processor)
 
 if __name__ == "__main__":
-    test_get_assistant_mask()
+    test_process_data()
