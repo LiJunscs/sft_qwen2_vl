@@ -6,8 +6,8 @@ dummy:
 
 llava_pretrain:
     _target_: src.data.LLaVADataset
-    data_path: /home/yuanziqi/Work25/VILA-main/playground/data/LLaVA-Pretrain/blip_laion_cc_sbu_558k.json
-    media_dir: /home/yuanziqi/Work25/VILA-main/playground/data/LLaVA-Pretrain
+    data_path: /data/public/multimodal/yuanziqi/datasets/pretraining_datasets/LLaVA-Pretrain/blip_laion_cc_sbu_558k.json
+    media_dir: /data/public/multimodal/yuanziqi/datasets/pretraining_datasets/LLaVA-Pretrain
     
 smit:
     _target_: src.data.LLaVADataset

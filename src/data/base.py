@@ -39,30 +39,30 @@ class BaseDataset(Dataset):
         try:
             # Process instance to conversation
             conversation = self.process(instance)
-            text = self.processor.apply_chat_template(conversation, tokenize=False)
-            # test = self.processor.apply_chat_template(conversation, tokenize=True, return_dict=True, return_assistant_tokens_mask = True)
-            image_inputs, video_inputs = process_vision_info(conversation)
-            inputs = self.processor(
-                text=[text],
-                images=image_inputs,
-                videos=video_inputs,
-                padding=True,
-                return_tensors="pt",   
-            )
-            assistant_start = torch.nonzero(inputs['input_ids'][0] == self.processor.tokenizer.encode("assistant")[0]).squeeze()
-            assert assistant_start.numel() == 1, "only one assistant token is supported."
-            assistant_start_indices = assistant_start.item() + 2
-            im_end = torch.nonzero(inputs['input_ids'][0] == self.processor.tokenizer.encode("<|im_end|>")[0]).squeeze()
-            assistant_end_indices = im_end[-1].item() + 1
+            # text = self.processor.apply_chat_template(conversation, tokenize=False)
+            # # test = self.processor.apply_chat_template(conversation, tokenize=True, return_dict=True, return_assistant_tokens_mask = True)
+            # image_inputs, video_inputs = process_vision_info(conversation)
+            # inputs = self.processor(
+            #     text=[text],
+            #     images=image_inputs,
+            #     videos=video_inputs,
+            #     padding=True,
+            #     return_tensors="pt",   
+            # )
+            # assistant_start = torch.nonzero(inputs['input_ids'][0] == self.processor.tokenizer.encode("assistant")[0]).squeeze()
+            # assert assistant_start.numel() == 1, "only one assistant token is supported."
+            # assistant_start_indices = assistant_start.item() + 2
+            # im_end = torch.nonzero(inputs['input_ids'][0] == self.processor.tokenizer.encode("<|im_end|>")[0]).squeeze()
+            # assistant_end_indices = im_end[-1].item() + 1
 
-            labels = torch.ones_like(inputs['input_ids']) * IGNORE_INDEX
-            labels[:,assistant_start_indices:assistant_end_indices] = inputs['input_ids'][:,assistant_start_indices:assistant_end_indices]
-            inputs.update({'labels': labels})
+            # labels = torch.ones_like(inputs['input_ids']) * IGNORE_INDEX
+            # labels[:,assistant_start_indices:assistant_end_indices] = inputs['input_ids'][:,assistant_start_indices:assistant_end_indices]
+            # inputs.update({'labels': labels})
         except Exception as e:
             logger.exception(f"Error processing instance '{instance}': '{e}'. Resampling.")
             return self.__getitem__(random.randint(0, len(self.instances) - 1))
 
-        return inputs
+        return conversation
 
     def __len__(self) -> int:
         return len(self.instances)

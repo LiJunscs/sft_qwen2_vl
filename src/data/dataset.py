@@ -1489,7 +1489,7 @@ def make_supervised_data_module(
     train_dataset = build_dataset(data_args.data_mixture, data_args, training_args, processor)
     training_args.sample_lens = [len(d) for d in train_dataset.datasets]
 
-    data_collator = DataCollator(tokenizer=processor.tokenizer)
+    data_collator = DataCollator(processor=processor)
 
     # PROCESS_GROUP_MANAGER = get_pg_manager()
     # if PROCESS_GROUP_MANAGER is None:
