@@ -13,8 +13,10 @@
 # limitations under the License.
 #
 # SPDX-License-Identifier: Apache-2.0
-
+import os
 from typing import Any, List
+import torch.distributed as dist
+from safetensors.torch import save_file, load_file
 
 __all__ = ["make_list", "disable_torch_init"]
 
@@ -22,6 +24,12 @@ __all__ = ["make_list", "disable_torch_init"]
 def make_list(obj: Any) -> List:
     return obj if isinstance(obj, list) else [obj]
 
+def rank0_print(*args):
+    if dist.is_initialized():
+        if dist.get_rank() == 0:
+            print(f"Rank {dist.get_rank()}: ", *args)
+    else:
+        print(*args)
 
 def disable_torch_init():
     """
@@ -32,4 +40,17 @@ def disable_torch_init():
     setattr(torch.nn.Linear, "reset_parameters", lambda self: None)
     setattr(torch.nn.LayerNorm, "reset_parameters", lambda self: None)
 
+def load_safetensors_from_dir(dir_path):
+        merged_state_dict = {}
+
+        for root, dirs, files in os.walk(dir_path):
+            for file in files:
+                if file.endswith('.safetensors'):
+                    file_path = os.path.join(root, file)
+                    try:
+                        state_dict = load_file(file_path)
+                        merged_state_dict.update(state_dict)
+                    except Exception as e:
+                        print(f"Error loading {file_path}: {e}")
+        return merged_state_dict
 
