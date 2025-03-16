@@ -8,11 +8,11 @@ N_NODE=1
 PORT=10086
 ADDR=localhost
 
-MODEL_NAME="/home/lijun2/multimodal/VideoNIAH/train/script/stage1/ckpt_final"
+MODEL_NAME="/home/lijun2/multimodal/checkpoints/Qwen2-VL-7B-Instruct"
 TOKENIZER_NAME="/home/lijun2/multimodal/checkpoints/Qwen2-VL-7B-Instruct"
 PROCESSOR_NAME="/home/lijun2/multimodal/checkpoints/Qwen2-VL-7B-Instruct"
-CONFIG_NAME="/home/lijun2/multimodal/VideoNIAH/train/config/config.json"
-MAX_NUM_FRAMES=256
+CONFIG_NAME="/home/lijun2/multimodal/sft_qwen2_vl/train/config/config.json"
+MAX_NUM_FRAMES=8
 MAX_PIXELS=200476
 LOAD_RESUME=true
 
@@ -21,19 +21,15 @@ MODEL_ARGS="
     --config_name=${CONFIG_NAME} \
     --tokenizer_name=${TOKENIZER_NAME} \
     --processor_name=${PROCESSOR_NAME} \
-    --max_num_frames=${MAX_NUM_FRAMES} \
-    --max_pixels=${MAX_PIXELS} \
     --load_resume=${LOAD_RESUME}
 "
 
-DATA_PATH="/data/public/multimodal/yuanziqi/datasets/pretraining_datasets/lmms-lab_LLaVA-ReCap-558K"
-IMAGE_PATH="None"
-VIDEO_PATH="None"
+DATA_PATH="/data/public/multimodal/yuanziqi/datasets/pretraining_datasets/lmms-lab_LLaVA-ReCap-558K /data/public/multimodal/yuanziqi/datasets/pretraining_datasets/lmms-lab_LLaVA-ReCap-118K"
 
 DATA_ARGS="
-    --data_path=${DATA_PATH} \
-    --image_path=${IMAGE_PATH} \
-    --video_path=${VIDEO_PATH}
+    --data_dir ${DATA_PATH} \
+    --max_num_frames=${MAX_NUM_FRAMES} \
+    --max_pixels=${MAX_PIXELS}
 "
 
 ENCODER_LEARNING_RATE=1e-3
@@ -42,10 +38,10 @@ FREEZE_ENCODER=true
 PROJECTOR_LEARNING_RATE=1e-3
 PROJECTOR_STEP_MAX=5000
 FREEZE_PROJECTOR=false
-COMPRESSOR_LEARNING_RATE=1e-4
-COMPRESSOR_STEP_MAX=5000
+COMPRESSOR_LEARNING_RATE=5e-3
+COMPRESSOR_STEP_MAX=10000
 FREEZE_COMPRESSOR=false
-LLM_LEARNING_RATE=1e-6
+LLM_LEARNING_RATE=1e-5
 LLM_STEP_MAX=5000
 FREEZE_LLM=true
 
@@ -60,10 +56,11 @@ NUM_TRAIN_EPOCHS=3.0
 MAX_GRAD_NORM=1.0
 WARMUP_RATIO=0.1
 LOGGING_DIR="./logs"
-SAVE_STEPS=2000
+SAVE_STEPS=40000
 SAVE_SAFETENSORS=true
-TRAIN_BATCH_SIZE=1
+TRAIN_BATCH_SIZE=4
 EVAL_BATCH_SIZE=1
+JUST_DEBUG=true
 
 TRAINING_ARGS="
     --encoder_learning_rate=${ENCODER_LEARNING_RATE} \
@@ -93,7 +90,8 @@ TRAINING_ARGS="
     --save_safetensors=${SAVE_SAFETENSORS} \
     --bf16 \
     --per_device_train_batch_size=${TRAIN_BATCH_SIZE} \
-    --per_device_eval_batch_size=${EVAL_BATCH_SIZE}
+    --per_device_eval_batch_size=${EVAL_BATCH_SIZE} \
+    --just_debug=${JUST_DEBUG}
 "
 
 CMD="torchrun \
@@ -101,7 +99,7 @@ CMD="torchrun \
     --nnodes=$N_NODE \
     --master_addr=$ADDR \
     --master_port=$PORT \
-    ../sft_qwen2_vl.py \
+    ../train_qwen2_vl.py \
     $MODEL_ARGS \
     $TRAINING_ARGS \
     $DATA_ARGS"

@@ -128,7 +128,8 @@ class S2Compressor(BaseCompressor):
             grid_thw_compressed.append(thw)
             if t == 1:
                 # 图片
-                image_token_indices = torch.nonzero((input_ids[i] == self.image_token_id)).squeeze()
+                ## NOTE: 暂时不清楚为什么在图片中出现了video_token_id
+                image_token_indices = torch.nonzero((input_ids[i] == self.image_token_id) | (input_ids[i] == self.video_token_id)).squeeze()
                 image_start = image_token_indices[0]
                 image_end = image_token_indices[-1]
                 mask = torch.zeros(seqlen, device=device, dtype=torch.bool)
@@ -143,12 +144,12 @@ class S2Compressor(BaseCompressor):
 
             else:
                 # 视频
-                video_token_indices = torch.nonzero((input_ids[i] == self.video_token_id)).squeeze()
+                video_token_indices = torch.nonzero((input_ids[i] == self.image_token_id) | (input_ids[i] == self.video_token_id)).squeeze()
                 video_start = video_token_indices[0]
                 video_end = video_token_indices[-1]
 
                 mask = torch.zeros(seqlen, device=device, dtype=torch.bool)
-                selectec_indices = torch.linspace(video_start, video_end,  h  // self.spatial_merge_size * w // self.spatial_merge_size, device=device, dtype=torch.int32)
+                selectec_indices = torch.linspace(video_start, video_end,  t * h  // self.spatial_merge_size * w // self.spatial_merge_size, device=device, dtype=torch.int32)
                 mask[: video_start] = True
                 mask[selectec_indices] = True
                 mask[video_end + 1 : ] = True

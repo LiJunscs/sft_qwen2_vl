@@ -9,7 +9,7 @@ from tqdm import tqdm
 import random
 
 class CustomDataset(Dataset):
-    def __init__(self, data_args):
+    def __init__(self, data_args, just_debug: bool = False):
         self.data_dirs = data_args.data_dir  # 现在 data_dir 是一个列表
         self.prompt_file = data_args.prompt_file
         self.image_dir = data_args.image_dir
@@ -33,7 +33,7 @@ class CustomDataset(Dataset):
                 raise NotImplementedError("No support yet data type")
 
             # 截取前100个样本用于调试
-            if data_args.debug_dataset:
+            if just_debug:
                 debug_dataset = {"train": None}
                 debug_dataset["train"] = [data["train"][i] for i in range(20)]
                 data = debug_dataset

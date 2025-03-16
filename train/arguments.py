@@ -26,14 +26,6 @@ class ModelArguments:
         metadata={"help": "处理器的名称或路径，如果未指定则使用 model_name_or_path"}
     )
 
-    max_num_frames: int = field(
-        default=256
-    )
-
-    max_pixels: int = field(
-        default=200476
-    )
-
     load_resume: bool = field(
         default=True,
         metadata={"help": "从一个预训练好的模型加载"}
@@ -110,6 +102,14 @@ class TrainingArgumentsCustom(TrainingArguments):
         default=True
     )
 
+    just_debug: bool = field(
+        default=False
+    )
+
+    sample_lens: int = field(
+        default=20,
+    )
+
 
 
 # 定义数据参数类
@@ -141,15 +141,6 @@ class DataArguments:
         metadata={"help": "视频的存放路径"}
     )
 
-    question: str = field(
-        default="question",
-        metadata={"help": "数据集中question对应的字段名"}
-    )
-
-    answer: str = field(
-        default="answer",
-        metadata={"help": "数据集中answer对应的字段名"}
-    )
 
     image_pre_prompt: str = field(
         default="Please describe the image.\n",
@@ -163,13 +154,6 @@ class DataArguments:
         default="",
     )
 
-    debug_dataset: bool = field(
-        default=False
-    )
-
-    num_samples: int = field(
-        default=-1,
-    )
 
     enhance: bool = field(
         default=False,
@@ -180,3 +164,15 @@ class DataArguments:
         default=1,
         metadata={"help": "是否对单张图片进行复制"}
     )
+
+    data_mixture: str = "videochat_flash_pretrain"
+
+    num_video_frames: int = field(
+        default=256
+    )
+
+    max_pixels: int = field(
+        default=200476
+    )
+
+    fps: float = 0.0  # 0.0 means we do not use fps at all. Always sample the same number of frames.

@@ -37,18 +37,20 @@ if tran_dir not in sys.path:
 from transformers import logging
 from train.arguments import TrainingArgumentsCustom, ModelArguments, DataArguments
 from train.utils import get_model, get_optimizer
-
+from src.data.dataset import make_supervised_data_module
 
 # 获取 logger 实例
 logger = logging.get_logger(__name__)
 
 
-def get_dataset(data_args):
-    return CustomDataset(data_args=data_args)
+def get_dataset(data_args, training_args, processor):
+    return make_supervised_data_module(processor=processor, data_args=data_args, training_args=training_args)
 
 
 def save_model(model: Union[torch.nn.Module, DDP, PreTrainedModel], optimizer: torch.optim.Optimizer, iter: int = -1, ckpt_name: Optional[str] = "ckpt", output_dir: Optional[str] = None, train_args: Optional[TrainingArgumentsCustom] = None):
-    output_dir = "./output"
+    output_dir = train_args.output_dir
+    if output_dir is None or output_dir == "":
+        output_dir = "./output"
     os.makedirs(output_dir, exist_ok=True)
 
     if hasattr(model, "module"):
@@ -135,23 +137,26 @@ def train(train_args: TrainingArgumentsCustom, model_args, data_args):
     world_size = dist.get_world_size()
     torch.cuda.set_device(rank)
 
-    train_data = get_dataset(data_args)
+    model, tokenizer, processor = get_model(model_args=model_args, train_args=train_args)
+    dataset = get_dataset(data_args, train_args, processor)
+    dataset, collator = dataset['train_dataset'], dataset['data_collator']
 
     # 创建分布式采样器
     train_sampler = DistributedSampler(
-        train_data,
+        dataset,
         num_replicas=world_size,
         rank=rank
     )
 
     train_dataloader = DataLoader(
-        train_data,
+        dataset,
         sampler=train_sampler,
         batch_size=training_args.per_device_train_batch_size,
-        collate_fn=collator_fn,
+        collate_fn=collator,
         drop_last=True,
+        pin_memory=True
     )
-    model, tokenizer, processor = get_model(model_args=model_args, train_args=train_args)
+    
     model.to(rank)
     optimizer, lr_schedulers = get_optimizer(model, train_args)
     ddp_model = DDP(module=model, device_ids=[rank])
@@ -168,16 +173,10 @@ def train(train_args: TrainingArgumentsCustom, model_args, data_args):
         train_sampler.set_epoch(epoch)
         ddp_model.train()
         for i, item in enumerate(train_dataloader):
-            contexts = item["text"]
-            visuals = item["visuals"]
-            answers = item["answer"]
-            inputs = process_data(contexts=contexts, answers=answers, visuals=visuals, processor=processor, max_num_frames=model_args.max_num_frames, max_pixels=model_args.max_pixels, sft=True)
-            inputs = inputs.to(rank)
-            labels = inputs.labels
-            cache_position = torch.arange(0, inputs.input_ids.shape[1], device=rank)
-
+            cache_position = torch.arange(0, item.input_ids.shape[1], device=rank)
+            labels = item.labels
             # prefill 
-            inputs = ddp_model.module.prepare_inputs_for_generation(**inputs, max_new_tokens=model_args.max_new_tokens, use_cache=True, cache_position=cache_position)
+            inputs = ddp_model.module.prepare_inputs_for_generation(**item, use_cache=True, cache_position=cache_position)
             inputs.update({
                 "labels": labels,
                 "compress": True
@@ -196,7 +195,7 @@ def train(train_args: TrainingArgumentsCustom, model_args, data_args):
             if (i + 1) % train_args.logging_steps == 0:
                 log_str = f"[Epoch {epoch}/{epochs}, Iter {i}/{data_len}: loss: {loss.item()} | grad_norm: {train_args.max_grad_norm}"
                 print_with_rank_and_time(log_str)
-            if (i + 1) % ddp_save_step == 0 and rank == 0:
+            if (i + 1) % ddp_save_step == 0 and rank == 0 and not train_args.just_debug:
                 model = ddp_model.module
                 save_model(model=model, optimizer=optimizer, iter=i + 1)
 

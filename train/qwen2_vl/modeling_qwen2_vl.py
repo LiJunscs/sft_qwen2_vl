@@ -1689,7 +1689,7 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
                 if compress:        # 启用压缩，恢复策略
                     if pixel_values is not None and pixel_values_videos is not None:
                         pixel_values = torch.cat([pixel_values, pixel_values_videos], dim=0)
-                        grid_thw = torch.cat(image_grid_thw, video_grid_thw)
+                        grid_thw = torch.cat([image_grid_thw, video_grid_thw], dim=0)
                     elif pixel_values_videos is not None:
                         pixel_values = pixel_values_videos
                         grid_thw = video_grid_thw
