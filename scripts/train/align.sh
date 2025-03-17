@@ -1,19 +1,21 @@
 #!/bin/bash
 
-export CUDA_VISIBLE_DEVICES=6,7
+export CUDA_VISIBLE_DEVICES=0,1,2,3
 
-N_PROC_PER_NODE=2
+N_PROC_PER_NODE=4
 N_NODE=1
 
 PORT=10086
 ADDR=localhost
 
+CONFIG_NAME="/data/public/multimodal/yuanziqi/models/Qwen2.5-VL-7B-Instruct"
 MODEL_NAME="/data/public/multimodal/yuanziqi/models/Qwen2.5-VL-7B-Instruct"
 PROCESSOR_NAME="/data/public/multimodal/yuanziqi/models/Qwen2.5-VL-7B-Instruct"
 
 MODEL_ARGS="
     --model_name_or_path=${MODEL_NAME} \
-    --processor_name=${PROCESSOR_NAME} 
+    --processor_name_or_path=${PROCESSOR_NAME} \
+    --config_name_or_path=${CONFIG_NAME}
 "
 
 DATA_MIXTURE="videochat_flash_pretrain"
@@ -22,7 +24,7 @@ MAX_PIXELS=451584
 
 DATA_ARGS="
     --data_mixture ${DATA_MIXTURE} \
-    --max_num_frames=${MAX_NUM_FRAMES} \
+    --num_video_frames=${MAX_NUM_FRAMES} \
     --max_pixels=${MAX_PIXELS}
 "
 
@@ -33,38 +35,8 @@ WEIGHT_DECAY=0.01
 WARMUP_RATIO=0.1
 LR_SCHEDULER_TYPE=cosine
 NUM_TRAIN_EPOCHS=1
-GRADIENT_ACCUMULATION_STEPS=1
 PER_DEVICE_TRAIN_BATCH_SIZE=4
-
-ENCODER_LEARNING_RATE=1e-3
-ENCODER_STEP_MAX=5000
-FREEZE_ENCODER=true
-PROJECTOR_LEARNING_RATE=1e-3
-PROJECTOR_STEP_MAX=5000
-FREEZE_PROJECTOR=false
-COMPRESSOR_LEARNING_RATE=5e-3
-COMPRESSOR_STEP_MAX=10000
-FREEZE_COMPRESSOR=false
-LLM_LEARNING_RATE=1e-5
-LLM_STEP_MAX=5000
-FREEZE_LLM=true
-
-LOGGING_STEPS=2
-
-DO_TRAIN=true
-DO_EVAL=false
-
-
-MAX_STEPS=-1
-
-MAX_GRAD_NORM=1.0
-
-LOGGING_DIR="./logs"
-SAVE_STEPS=40000
-SAVE_SAFETENSORS=true
-
-EVAL_BATCH_SIZE=1
-JUST_DEBUG=true
+GRADIENT_ACCUMULATION_STEPS=1
 
 TRAINING_ARGS="
     --tune_vision_tower=false \
@@ -82,7 +54,7 @@ TRAINING_ARGS="
     --gradient_accumulation_steps=${GRADIENT_ACCUMULATION_STEPS} \
     --evaluation_strategy=no \
     --save_strategy=steps \
-    --save_steps=100000 \ 
+    --save_steps=100000 \
     --save_total_limit=1 \
     --bf16 \
     --gradient_checkpointing=true \
@@ -95,7 +67,8 @@ CMD="torchrun \
     --nnodes=$N_NODE \
     --master_addr=$ADDR \
     --master_port=$PORT \
-    ../train_qwen2_vl.py \
+    /home/yuanziqi/Work25/sft_qwen2_vl/src/train/train_mem.py \
+    --deepspeed /home/yuanziqi/Work25/sft_qwen2_vl/scripts/zero2.json \
     $MODEL_ARGS \
     $TRAINING_ARGS \
     $DATA_ARGS"
