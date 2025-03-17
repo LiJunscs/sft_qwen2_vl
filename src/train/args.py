@@ -22,8 +22,8 @@ import transformers
 
 @dataclass
 class DataArguments:
-    data_path: str = field(default=None, metadata={"help": "Path to the training data."})
-    image_folder: Optional[str] = field(default=None)
+    # data_path: str = field(default=None, metadata={"help": "Path to the training data."})
+    # image_folder: Optional[str] = field(default=None)
     data_mixture: str = "videochat_flash_pretrain"
 
     # for image training
@@ -37,21 +37,27 @@ class DataArguments:
 @dataclass
 class ModelArguments:
     model_name_or_path: Optional[str] = field(default="/data/public/multimodal/yuanziqi/models/Qwen2.5-VL-7B-Instruct")
+    config_name_or_path: Optional[str] = field(default="/data/public/multimodal/yuanziqi/models/Qwen2.5-VL-7B-Instruct")
+    processor_name_or_path: Optional[str] = field(default="/data/public/multimodal/yuanziqi/models/Qwen2.5-VL-7B-Instruct")
 
 
 @dataclass
 class TrainingArguments(transformers.TrainingArguments):
+    
     cache_dir: Optional[str] = field(default=None)
+    verbose_logging: bool = field(default=True)
     
     tune_vision_tower: bool = field(default=False)
     tune_language_model: bool = field(default=False)
-    tune_mm_projector: bool = field(default=False)
+    tune_projector: bool = field(default=True)
     model_dtype: str = field(default="torch.bfloat16")
     model_max_length: int = field(
         default=4096,
         metadata={"help": "Maximum sequence length. Sequences will be right padded (and possibly truncated)."},
     )
-    mm_projector_lr: float = field(default=1e-3)
-    vision_tower_lr: float = field(default=1e-3)
+    # optimizer settings.
+    optim: str = field(default="adamw_torch")
+    projector_lr: float = field(default=1e-3)
+    vision_tower_lr: float = field(default=5e-5)
     language_model_lr: float = field(default=5e-5)
     

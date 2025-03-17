@@ -51,19 +51,6 @@ if __name__ == "__main__":
         )
         loss = ForCausalLMLoss(res.logits, inputs.labels, vocab_size=res.logits.shape[-1], num_items_in_batch = (inputs.labels!=-100).sum(), ignore_index=-100)
         print(1111)
-    # res = dataset[0]
-    # res_v = dataset[-1]
-    # conversation = [res, res_v]
-    # text = processor.apply_chat_template(conversation, tokenize=False)
-    # image_inputs, video_inputs = process_vision_info(conversation)
-    # inputs = processor(
-    #     text=text,
-    #     images=image_inputs,
-    #     videos=video_inputs,
-    #     padding=True,
-    #     return_tensors="pt",   
-    # )
-
 
     print(11111)
 
