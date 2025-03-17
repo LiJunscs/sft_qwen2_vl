@@ -65,7 +65,7 @@ def train(attn_implementation="flash_attention_2"):
 
     set_seed(training_args.seed)
 
-    model_config = AutoConfig.from_pretrained(model_args.model_name_or_path)
+    model_config = AutoConfig.from_pretrained(model_args.config_name_or_path)
     model_config._attn_implementation = model_config.vision_config._attn_implementation = attn_implementation
     model = Qwen2_5_VLForConditionalGeneration(model_config)
     #TODO. mock patch model.visual.merger here.
