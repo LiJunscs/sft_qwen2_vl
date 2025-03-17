@@ -35,8 +35,8 @@ tran_dir = "/home/lijun2/multimodal/sft_qwen2_vl/"
 if tran_dir not in sys.path:
     sys.path.append(tran_dir)
 from transformers import logging
-from train.arguments import TrainingArgumentsCustom, ModelArguments, DataArguments
-from train.utils import get_model, get_optimizer
+from legacy.arguments import TrainingArgumentsCustom, ModelArguments, DataArguments
+from legacy.utils import get_model, get_optimizer
 from src.data.dataset import make_supervised_data_module
 
 # 获取 logger 实例
@@ -159,7 +159,7 @@ def train(train_args: TrainingArgumentsCustom, model_args, data_args):
     
     model.to(rank)
     optimizer, lr_schedulers = get_optimizer(model, train_args)
-    ddp_model = DDP(module=model, device_ids=[rank])
+    ddp_model = DDP(module=model, device_ids=[rank], find_unused_parameters=True)
 
 
     epochs = int(train_args.num_train_epochs)
@@ -186,15 +186,15 @@ def train(train_args: TrainingArgumentsCustom, model_args, data_args):
             loss = outputs.loss
 
             loss.backward()
+            if (i + 1) % train_args.logging_steps == 0:
+                log_str = f"[Epoch {epoch}/{epochs}, Iter {i}/{data_len}: loss: {loss.item()} | grad_norm: {train_args.max_grad_norm}"
+                print_with_rank_and_time(log_str)
             if (i + 1) % grad_accumulation_steps == 0:
                 torch.nn.utils.clip_grad_norm_(ddp_model.parameters(), train_args.max_grad_norm)
                 optimizer.step()
                 for lr_scheduler in lr_schedulers:
                     lr_scheduler.step()
                 optimizer.zero_grad()
-            if (i + 1) % train_args.logging_steps == 0:
-                log_str = f"[Epoch {epoch}/{epochs}, Iter {i}/{data_len}: loss: {loss.item()} | grad_norm: {train_args.max_grad_norm}"
-                print_with_rank_and_time(log_str)
             if (i + 1) % ddp_save_step == 0 and rank == 0 and not train_args.just_debug:
                 model = ddp_model.module
                 save_model(model=model, optimizer=optimizer, iter=i + 1)

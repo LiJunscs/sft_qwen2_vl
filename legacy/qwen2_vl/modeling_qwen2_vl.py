@@ -49,8 +49,9 @@ from transformers.utils import (
     logging,
     replace_return_docstrings,
 )
-from .configuration_qwen2_vl import Qwen2VLConfig, Qwen2VLVisionConfig
+from qwen2_vl.configuration_qwen2_vl import Qwen2VLConfig, Qwen2VLVisionConfig
 from compressor.compressor import OptionalCompressor, CompressorConfig
+from compressor.base_compressor import S2Compressor, IdentityCompressor
 
 if is_flash_attn_2_available():
     from flash_attn import flash_attn_varlen_func
@@ -296,7 +297,7 @@ class PatchEmbed(nn.Module):
 
 
 class PatchMerger(nn.Module):
-    def __init__(self, dim: int, context_dim: int, spatial_merge_size: int = 2) -> None:
+    def __init__(self, dim: int, context_dim: int, spatial_merge_size: int = 2, **kwargs) -> None:
         super().__init__()
         self.hidden_size = context_dim * (spatial_merge_size**2)
         self.ln_q = LayerNorm(context_dim, eps=1e-6)
@@ -310,9 +311,18 @@ class PatchMerger(nn.Module):
         x = self.mlp(self.ln_q(x).view(-1, self.hidden_size))
         return x
 
+class MLPMerger(nn.Module):
+    def __init__(self, dim: int, context_dim: int, act: str="gelu", **kwargs):
+        super().__init__()
+        self.hidden_size = context_dim * 2
+        self.fc1 = nn.Linear(context_dim, self.hidden_size)
+        self.act = ACT2FN[act]
+        self.fc2 = nn.Linear(self.hidden_size, dim)
+    def forward(self, x) -> torch.Tensor:
+        return self.fc2(self.act(self.fc1(x)))
 
 class VisionMlp(nn.Module):
-    def __init__(self, dim: int, hidden_dim: int, hidden_act: str) -> None:
+    def __init__(self, dim: int, hidden_dim: int, hidden_act: str, **kwargs) -> None:
         super().__init__()
         self.fc1 = nn.Linear(dim, hidden_dim)
         self.act = ACT2FN[hidden_act]
@@ -979,6 +989,8 @@ class Qwen2VLPreTrainedModel(PreTrainedModel):
 class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
     config_class = Qwen2VLVisionConfig
     _no_split_modules = ["Qwen2VLVisionBlock"]
+    compressor_cls = {"2x2_s2": S2Compressor}
+    merger_cls = {"mlp": MLPMerger, "patch_merge": PatchMerger}
 
     def __init__(self, config) -> None:
         super().__init__(config)
@@ -997,9 +1009,16 @@ class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
         self.blocks = nn.ModuleList(
             [Qwen2VLVisionBlock(config, config._attn_implementation) for _ in range(config.depth)]
         )
-        self.merger = PatchMerger(
+        # self.merger = PatchMerger(
+        #     dim=config.hidden_size, context_dim=config.embed_dim, spatial_merge_size=config.spatial_merge_size
+        # )
+        self.merger = self.merger_cls[config.merger_type](
             dim=config.hidden_size, context_dim=config.embed_dim, spatial_merge_size=config.spatial_merge_size
         )
+        self.compressor = self.compressor_cls[config.compressor_type](
+            dim=config.hidden_size, context_dim=config.embed_dim, spatial_merge_size=config.spatial_merge_size
+        )
+        print()
 
     def get_dtype(self) -> torch.dtype:
         return self.blocks[0].mlp.fc2.weight.dtype
@@ -1036,7 +1055,7 @@ class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
         rotary_pos_emb = rotary_pos_emb_full[pos_ids].flatten(1)
         return rotary_pos_emb
 
-    def forward(self, hidden_states: torch.Tensor, grid_thw: torch.Tensor) -> torch.Tensor:
+    def forward(self, hidden_states: torch.Tensor, grid_thw: torch.Tensor, compress: bool = False) -> torch.Tensor:
         # hidden size的改变(seqlen, 1176) -> (seqlen, 1280)
         hidden_states = self.patch_embed(hidden_states)
         rotary_pos_emb = self.rot_pos_emb(grid_thw)
@@ -1048,8 +1067,9 @@ class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
 
         for blk in self.blocks:
             hidden_states = blk(hidden_states, cu_seqlens=cu_seqlens, rotary_pos_emb=rotary_pos_emb)
-
-        return self.merger(hidden_states)
+        if compress:
+            hidden_states, grid_thw = self.compressor(hidden_states, grid_thw)
+        return self.merger(hidden_states), grid_thw
 
 
 @add_start_docstrings(
@@ -1421,7 +1441,7 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
     def __init__(self, config):
         super().__init__(config)
         ## NOTE: compressor
-        self.compressor = OptionalCompressor(CompressorConfig(**config.compressor_config))
+        # self.compressor = OptionalCompressor(CompressorConfig(**config.compressor_config))
         self.visual = Qwen2VisionTransformerPretrainedModel._from_config(config.vision_config)
         self.model = Qwen2VLModel(config)
         self.vocab_size = config.vocab_size
@@ -1685,74 +1705,79 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         if inputs_embeds is None:
-            if pixel_values is not None or pixel_values_videos is not None:     # 同时包含视觉和文本内容
-                if compress:        # 启用压缩，恢复策略
-                    if pixel_values is not None and pixel_values_videos is not None:
-                        pixel_values = torch.cat([pixel_values, pixel_values_videos], dim=0)
-                        grid_thw = torch.cat([image_grid_thw, video_grid_thw], dim=0)
-                    elif pixel_values_videos is not None:
-                        pixel_values = pixel_values_videos
-                        grid_thw = video_grid_thw
-                    else:
-                        grid_thw = image_grid_thw
-                    compress_output, origin_data = self.compressor(pixel_values=pixel_values, grid_thw=grid_thw, input_ids=input_ids, position_ids=position_ids, attention_mask=attention_mask, labels=labels, scale=scale)
-                    pixel_values, grid_thw, input_ids, position_ids, attention_mask, labels = compress_output
-                    if scale:
-                        pixel_values_ori, grid_thw_ori, input_ids_ori, position_ids_ori, attention_mask_ori, labels_ori = origin_data
-                        ## TODO: scale function
-                    inputs_embeds = self.model.embed_tokens(input_ids)
-                    pixel_values = pixel_values.type(self.visual.get_dtype())
-                    visual_embeds = self.visual(pixel_values, grid_thw=grid_thw)
+            if pixel_values is not None:
+                pixel_values = pixel_values.type(self.visual.get_dtype())
+                if scale:
+                    ## TODO
+                    pass
+                image_embeds, image_grid_thw = self.visual(pixel_values, grid_thw=image_grid_thw, compress=compress)
+                # n_image_tokens = (input_ids == self.config.image_token_id).sum().item()
+                # n_image_features = image_embeds.shape[0]
+                # if n_image_tokens != n_image_features:
+                #     raise ValueError(
+                #         f"Image features and image tokens do not match: tokens: {n_image_tokens}, features {n_image_features}"
+                #     )
+                # image_mask = (
+                #     (input_ids == self.config.image_token_id)
+                #     .unsqueeze(-1)
+                #     .expand_as(inputs_embeds)
+                #     .to(inputs_embeds.device)
+                # )
+                # image_embeds = image_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
+                # inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
 
-                    visual_mask = (input_ids == self.config.image_token_id) | (input_ids == self.config.video_token_id)
-
-                    n_visual_tokens = visual_mask.sum().item()
-                    n_visual_features = visual_embeds.shape[0]
-
-                    if n_visual_tokens != n_visual_features:
-                        raise ValueError(f"Visual features and visual tokens do not match: tokens: {n_visual_tokens}, features {n_visual_features}")
-                    visual_mask = visual_mask.unsqueeze(-1).expand_as(inputs_embeds).to(inputs_embeds.device)
-                    visual_embeds = visual_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
-
-                    inputs_embeds = inputs_embeds.masked_scatter(visual_mask, visual_embeds)
-                else:       # 不启用压缩，恢复策略
-                    if pixel_values is not None:
-                        pixel_values = pixel_values.type(self.visual.get_dtype())
-                        image_embeds = self.visual(pixel_values, grid_thw=image_grid_thw)
-                        n_image_tokens = (input_ids == self.config.image_token_id).sum().item()
-                        n_image_features = image_embeds.shape[0]
-                        if n_image_tokens != n_image_features:
-                            raise ValueError(
-                                f"Image features and image tokens do not match: tokens: {n_image_tokens}, features {n_image_features}"
-                            )
-                        image_mask = (
-                            (input_ids == self.config.image_token_id)
-                            .unsqueeze(-1)
-                            .expand_as(inputs_embeds)
-                            .to(inputs_embeds.device)
+            if pixel_values_videos is not None:
+                pixel_values_videos = pixel_values_videos.type(self.visual.get_dtype())
+                video_embeds, video_grid_thw = self.visual(pixel_values_videos, grid_thw=video_grid_thw, compress=compress)
+                # n_video_tokens = (input_ids == self.config.video_token_id).sum().item()
+                # n_video_features = video_embeds.shape[0]
+                # if n_video_tokens != n_video_features:
+                #     raise ValueError(
+                #         f"Video features and video tokens do not match: tokens: {n_video_tokens}, features {n_video_features}"
+                #     )
+                # video_mask = (
+                #     (input_ids == self.config.video_token_id)
+                #     .unsqueeze(-1)
+                #     .expand_as(inputs_embeds)
+                #     .to(inputs_embeds.device)
+                # )
+                # video_embeds = video_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
+                # inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
+            # 纯文本内容
+            inputs_embeds = self.model.embed_tokens(input_ids)
+            if compress:
+                input_ids, position_ids, attention_mask, rope_deltas, labels = self.post_compress(input_ids=input_ids, image_grid_thw=image_grid_thw, video_grid_thw=video_grid_thw, labels=labels)
+                if pixel_values is not None:
+                    n_image_tokens = (input_ids == self.config.image_token_id).sum().item()
+                    n_image_features = image_embeds.shape[0]
+                    if n_image_tokens != n_image_features:
+                        raise ValueError(
+                            f"Image features and image tokens do not match: tokens: {n_image_tokens}, features {n_image_features}"
                         )
-                        image_embeds = image_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
-                        inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
-
-                    if pixel_values_videos is not None:
-                        pixel_values_videos = pixel_values_videos.type(self.visual.get_dtype())
-                        video_embeds = self.visual(pixel_values_videos, grid_thw=video_grid_thw)
-                        n_video_tokens = (input_ids == self.config.video_token_id).sum().item()
-                        n_video_features = video_embeds.shape[0]
-                        if n_video_tokens != n_video_features:
-                            raise ValueError(
-                                f"Video features and video tokens do not match: tokens: {n_video_tokens}, features {n_video_features}"
-                            )
-                        video_mask = (
-                            (input_ids == self.config.video_token_id)
-                            .unsqueeze(-1)
-                            .expand_as(inputs_embeds)
-                            .to(inputs_embeds.device)
+                    image_mask = (
+                        (input_ids == self.config.image_token_id)
+                        .unsqueeze(-1)
+                        .expand_as(inputs_embeds)
+                        .to(inputs_embeds.device)
+                    )
+                    image_embeds = image_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
+                    inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
+                elif pixel_values_videos is not None:
+                    n_video_tokens = (input_ids == self.config.video_token_id).sum().item()
+                    n_video_features = video_embeds.shape[0]
+                    if n_video_tokens != n_video_features:
+                        raise ValueError(
+                            f"Video features and video tokens do not match: tokens: {n_video_tokens}, features {n_video_features}"
                         )
-                        video_embeds = video_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
-                        inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
-            else:       # 纯文本内容
-                inputs_embeds = self.model.embed_tokens(input_ids)
+                    video_mask = (
+                        (input_ids == self.config.video_token_id)
+                        .unsqueeze(-1)
+                        .expand_as(inputs_embeds)
+                        .to(inputs_embeds.device)
+                    )
+                    video_embeds = video_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
+                    inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
+
             if attention_mask is not None:
                 attention_mask = attention_mask.to(inputs_embeds.device)
 
@@ -1885,6 +1910,71 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
             }
         )
         return model_inputs
+    
+    def post_compress(self, input_ids: torch.Tensor, image_grid_thw: torch.Tensor, video_grid_thw: torch.Tensor, labels: Optional[torch.Tensor] = None):
+        max_padding_length = 0
+        input_ids_compressed = []
+        if labels is not None:
+            labels_compressed = []
+
+        image_idx = 0
+        video_idx = 0
+        ## 图片和视频在input_ids中是无序的，但是所有的图片或视频是有序的
+        for i, input_id in enumerate(input_ids):
+            if torch.any(input_id == self.config.image_token_id):
+                t, h, w = image_grid_thw[image_idx]
+                image_idx += 1
+                # 将除了image_token_id的都设置为True
+                mask = input_id != self.config.image_token_id
+                # 只保留压缩后数量的image_token
+                image_start = torch.nonzero(mask == False)[0]
+                image_end = image_start + t * h * w
+                mask[image_start:image_end] = True
+                # 去掉padding
+                mask[input_id == self.config.pad_token_id] = False
+            elif torch.any(input_id == self.config.video_token_id):
+                t, h, w = video_grid_thw[video_idx]
+                max_padding_length = max(max_padding_length, t * h * w)
+                video_idx += 1
+                # 将除了video_token_id的都设置为True
+                mask = input_id != self.config.video_token_id
+                # 只保留压缩后数量的image_token
+                video_start = torch.nonzero(mask == False)[0]
+                video_end = video_start + t * h * w
+                mask[video_start:video_end] = True
+                # 去掉padding
+                mask[input_id == self.config.pad_token_id] = False
+            else:
+                mask = input_id != self.config.pad_token_id
+            # 取出压缩后的input_id
+            input_id_com = input_id[mask]
+            max_padding_length = max(max_padding_length, input_id_com.shape[0])
+            input_ids_compressed.append(input_id_com)
+            # 如果存在labels，则取出压缩后的labels
+            if labels is not None:
+                label_com = labels[i][mask]
+                labels_compressed.append(label_com)
+        # 为每一个input_id_com构建padding
+        for i, input_id in enumerate(input_ids_compressed):
+            seqlen = input_id.shape[0]
+            input_ids_compressed[i] = torch.cat([torch.full((max_padding_length - seqlen, ), self.config.pad_token_id, device=input_id.device, dtype=torch.int32), input_id], dim=0)
+            if labels is not None:
+                labels_compressed[i] = torch.cat([torch.full((max_padding_length - seqlen, ), -100, device=input_id.device, dtype=torch.int32), labels_compressed[i]], dim=0)
+        input_ids = torch.stack(input_ids_compressed, dim=0)
+        if labels is not None:
+            labels = torch.stack(labels_compressed, dim=0)
+        attention_mask = (input_ids != self.config.pad_token_id).to(dtype=torch.int32)
+        if image_grid_thw is not None:
+            image_grid_thw[:, 1:] *= self.config.vision_config.spatial_merge_size
+        if video_grid_thw is not None:
+            video_grid_thw[:, 1:] *= self.config.vision_config.spatial_merge_size
+        position_ids, rope_deltas = self.get_rope_index(
+                    input_ids, image_grid_thw, video_grid_thw, attention_mask
+                )
+        return input_ids, position_ids, attention_mask, rope_deltas, labels
+        
+
+
     
     
     def frames_compress_then_scale(

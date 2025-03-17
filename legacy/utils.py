@@ -14,7 +14,7 @@ from safetensors.torch import save_file, load_file
 
 
 from torch.nn.parallel import DistributedDataParallel as DDP
-from train.arguments import TrainingArgumentsCustom
+from legacy.arguments import TrainingArgumentsCustom
 
 from transformers import logging
 def get_model(model_args, train_args: Optional[TrainingArgumentsCustom]) -> Tuple[Qwen2VLForConditionalGeneration, AutoTokenizer, AutoProcessor]:
@@ -93,7 +93,12 @@ def get_optimizer(model: Union[torch.nn.Module, DDP], train_args: TrainingArgume
     if hasattr(model, "module"):
         model = model.module
     for name, param in model.named_parameters():
-        if "merger" in name:
+        if "compressor" in name:
+            if freeze_compressor:
+                param.requires_grad= False
+            else:
+                compressor_params.append(param)
+        elif "merger" in name:
             if freeze_projector:
                 param.requires_grad = False
             else:
@@ -103,11 +108,6 @@ def get_optimizer(model: Union[torch.nn.Module, DDP], train_args: TrainingArgume
                 param.requires_grad = False
             else:
                 encoder_params.append(param)
-        elif "compressor" in name:
-            if freeze_compressor:
-                param.requires_grad= False
-            else:
-                compressor_params.append(param)
         else:
             if freeze_llm:
                 param.requires_grad = False

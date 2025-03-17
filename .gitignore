@@ -4,3 +4,4 @@ output/*
 train/script/output/*
 *ckpt*
 *.safetensors
+legacy/*

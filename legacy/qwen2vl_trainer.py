@@ -4,9 +4,13 @@ from transformers import Trainer
 from typing import Optional, Dict
 import torch
 import os
+import sys
 import torch.distributed as dist
 import json
 import torch.nn as nn
+root_dir = os.path.dirname(os.path.abspath(__file__))
+if root_dir not in sys.path:
+    sys.path.append(root_dir)
 class Qwen2VLTrainer(Trainer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

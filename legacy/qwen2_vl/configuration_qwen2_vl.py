@@ -35,6 +35,8 @@ class Qwen2VLVisionConfig(PretrainedConfig):
         patch_size=14,
         spatial_merge_size=2,
         temporal_patch_size=2,
+        compressor_type="Indentity",
+        merger_type="mlp",
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -49,6 +51,8 @@ class Qwen2VLVisionConfig(PretrainedConfig):
         self.patch_size = patch_size
         self.spatial_merge_size = spatial_merge_size
         self.temporal_patch_size = temporal_patch_size
+        self.compressor_type = compressor_type
+        self.merger_type = merger_type
 
 
 class Qwen2VLConfig(PretrainedConfig):
