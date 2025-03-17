@@ -66,20 +66,22 @@ def train(attn_implementation="flash_attention_2"):
     set_seed(training_args.seed)
 
     model_config = AutoConfig.from_pretrained(model_args.model_name_or_path)
+    model_config._attn_implementation = model_config.vision_config._attn_implementation = attn_implementation
     model = Qwen2_5_VLForConditionalGeneration(model_config)
     #TODO. mock patch model.visual.merger here.
     mock_projector = Projector({
         'projector_cls': 'dummy', 
         'kwargs': {
             'context_dim': model_config.vision_config.hidden_size, 
-            'dim': model_config.out_hidden_size, 
-            'spatial_merge_size': model_config.spatial_merge_size
+            'dim': model_config.vision_config.out_hidden_size, 
+            'spatial_merge_size': model_config.vision_config.spatial_merge_size
         }
     })
     model.visual.merger = mock_projector
+    model.visual.merger.initialize_model()
 
     weights = load_safetensors_from_dir(dir_path=model_args.model_name_or_path)
-    model.load_state_dict(state_dict=weights, strict=False)
+    model.load_state_dict(state_dict=weights, strict=False, assign=True)
     
     # model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
     #     model_args.model_name_or_path,
@@ -87,9 +89,6 @@ def train(attn_implementation="flash_attention_2"):
     #     attn_implementation=attn_implementation,
     #     # device_map="auto",
     # )
-
-
-    
 
     rank0_print(model)
 
