@@ -488,31 +488,31 @@ class CustomTrainer(Trainer):
         if self.args.should_save:
             return self.model.save_pretrained(output_dir, state_dict=state_dict)
 
-    def log(self, logs: Dict[str, float]) -> None:
-        """
-        Log `logs` on the various objects watching training.
+    # def log(self, logs: Dict[str, float]) -> None:
+    #     """
+    #     Log `logs` on the various objects watching training.
 
-        Subclass and override this method to inject custom behavior.
+    #     Subclass and override this method to inject custom behavior.
 
-        Args:
-            logs (`Dict[str, float]`):
-                The values to log.
-        """
-        if self.state.epoch is not None:
-            logs["epoch"] = round(self.state.epoch, 2)
-        if self.args.include_num_input_tokens_seen:
-            logs["num_input_tokens_seen"] = self.state.num_input_tokens_seen
+    #     Args:
+    #         logs (`Dict[str, float]`):
+    #             The values to log.
+    #     """
+    #     if self.state.epoch is not None:
+    #         logs["epoch"] = round(self.state.epoch, 2)
+    #     if self.args.include_num_input_tokens_seen:
+    #         logs["num_input_tokens_seen"] = self.state.num_input_tokens_seen
 
-        output = {**logs, **{"step": self.state.global_step}}
-        self.state.log_history.append(output)
+    #     output = {**logs, **{"step": self.state.global_step}}
+    #     self.state.log_history.append(output)
 
-        if self.args.debug_e2e and self.control.should_training_stop:
+    #     if self.args.debug_e2e and self.control.should_training_stop:
 
-            # Only save log history if the current process is rank 0
-            if dist.get_rank() == 0:
-                with open(f"{self.args.output_dir}/log_history.json", "w") as f:
-                    json.dump(self.state.log_history, f, indent=4)
+    #         # Only save log history if the current process is rank 0
+    #         if dist.get_rank() == 0:
+    #             with open(f"{self.args.output_dir}/log_history.json", "w") as f:
+    #                 json.dump(self.state.log_history, f, indent=4)
 
-        self.control = self.callback_handler.on_log(self.args, self.state, self.control, logs)
+    #     self.control = self.callback_handler.on_log(self.args, self.state, self.control, logs)
 
 
