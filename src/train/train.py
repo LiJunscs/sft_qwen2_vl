@@ -66,7 +66,7 @@ def train(attn_implementation="flash_attention_2"):
 
     set_seed(training_args.seed)
 
-    model_config = Qwen2_5_VLConfig.from_pretrained(model_args.config_name_or_path)
+    model_config = AutoConfig.from_pretrained(model_args.config_name_or_path, torch_dtype=compute_dtype)
     model_config._attn_implementation = model_config.vision_config._attn_implementation = attn_implementation
     model = Qwen2_5_VLForConditionalGeneration(model_config)
     #TODO. mock patch model.visual.merger here.
@@ -97,7 +97,7 @@ def train(attn_implementation="flash_attention_2"):
     
     
     # model = get_model(model_args, training_args, bnb_model_from_pretrained_args)
-    # model.config.use_cache = False
+    model.config.use_cache = False
     # if model_args.rope_scaling_factor is not None and model_args.rope_scaling_type is not None:
     #     model.config.rope_scaling = {
     #         "factor": model_args.rope_scaling_factor,

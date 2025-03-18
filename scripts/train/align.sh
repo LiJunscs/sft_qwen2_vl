@@ -37,10 +37,9 @@ WEIGHT_DECAY=0.01
 WARMUP_RATIO=0.1
 LR_SCHEDULER_TYPE=cosine
 NUM_TRAIN_EPOCHS=1
-PER_DEVICE_TRAIN_BATCH_SIZE=4
-GRADIENT_ACCUMULATION_STEPS=10
-MAX_STEPS=500
-
+PER_DEVICE_TRAIN_BATCH_SIZE=2
+GRADIENT_ACCUMULATION_STEPS=4
+# Currently do not support zero3 and gradient checkpoints.
 TRAINING_ARGS="
     --tune_vision_tower=false \
     --tune_language_model=false \
@@ -55,12 +54,12 @@ TRAINING_ARGS="
     --num_train_epochs=${NUM_TRAIN_EPOCHS} \
     --per_device_train_batch_size=${PER_DEVICE_TRAIN_BATCH_SIZE} \
     --gradient_accumulation_steps=${GRADIENT_ACCUMULATION_STEPS} \
-    --evaluation_strategy=no \
+    --eval_strategy=no \
     --save_strategy=steps \
     --save_steps=100000 \
+    --logging_steps=1 \
     --save_total_limit=1 \
     --bf16 \
-    --gradient_checkpointing=true \
     --dataloader_num_workers=0 \
     --report_to=tensorboard \
     --max_steps=${MAX_STEPS}
