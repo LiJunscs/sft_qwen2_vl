@@ -1830,6 +1830,20 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
                 video_embeds, other_outputs = self.visual(pixel_values_videos, grid_thw=video_grid_thw, input_ids=input_ids, position_ids=position_ids, attention_mask=attention_mask, labels=labels, compress=compress)
                 if other_outputs is not None:
                     video_grid_thw, input_ids, position_ids, attention_mask, labels = other_outputs
+            ## NOTE: 由于压缩后，增加和很多额外的左padding, 所以将这些去掉。找到所有行中最左边的一个非0原生下标，然后切片
+            if compress:
+                cumsum = torch.cumsum(attention_mask, dim=1)
+                first_non_zero = torch.nonzero(cumsum, as_tuple=True)[1]
+                if first_non_zero.numel() == 0:
+                    idx = 0
+                else:
+                    idx = first_non_zero.min()
+                input_ids = input_ids[:, idx:]
+                attention_mask = attention_mask[:, idx:]
+                if position_ids is not None:
+                    position_ids = position_ids[:, :, idx:]
+                if labels is not None:
+                    labels = labels[:, idx:]
             inputs_embeds = self.model.embed_tokens(input_ids)
             if pixel_values is not None:
                 n_image_tokens = (input_ids == self.config.image_token_id).sum().item()

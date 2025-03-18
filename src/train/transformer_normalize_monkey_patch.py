@@ -139,13 +139,17 @@ def training_step(
     Return:
         `torch.Tensor`: The tensor with training loss on this batch.
     """
+    ## NOTE: 根据当前step设置随机数种子，后续随机选择当前batch是否进行compress
+    if self.state.global_step % (self.args.save_steps // 4) == 0:
+        torch.manual_seed(self.state.global_step)
     model.train()
     if hasattr(self.optimizer, "train") and callable(self.optimizer.train):
         self.optimizer.train()
 
     inputs = self._prepare_inputs(inputs)
+    compress = torch.rand(1).item() >= 0.5
     inputs.update({
-        "compress": self.state.global_step % 2 == 0
+        "compress": compress
     })
     # if is_sagemaker_mp_enabled():
     #     loss_mb = smp_forward_backward(model, inputs, self.args.gradient_accumulation_steps)
@@ -213,6 +217,15 @@ def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=N
             loss_kwargs["num_items_in_batch"] = num_items_in_batch
         inputs = {**inputs, **loss_kwargs}
     outputs = model(**inputs)
+    ## NOTE: 由于随机进行compress的原因，所以可能部分参数不存在梯度，导致DDP出错，这里将不存在梯度的参数的梯度设置为0。不过这个是否真的起到作用存疑
+    # 遍历优化器中的所有参数组
+    for param_group in self.optimizer.param_groups:
+        # 遍历每个参数组中的参数
+        for param in param_group['params']:
+            # 检查参数是否需要梯度且梯度为 None
+            if param.requires_grad and param.grad is None:
+                    # 手动将梯度设置为相同形状的零张量
+                    param.grad = torch.zeros_like(param)
     # Save past state if it exists
     # TODO: this needs to be fixed and made cleaner later.
     if self.args.past_index >= 0:
@@ -226,6 +239,9 @@ def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=N
         #     model_name = unwrapped_model._get_name()
         model_name = unwrapped_model._get_name()
         # User-defined compute_loss function
+        ## NOTE: 由于存在compress，所以input_ids的长度可能会变化，对应labels跟着改变
+        seqlen = outputs.logits.shape[1]
+        labels = labels[:, -seqlen:]
         if self.compute_loss_func is not None:
             loss = self.compute_loss_func(outputs.logits, labels, num_items_in_batch=num_items_in_batch)
         # elif model_name in MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.values():
@@ -240,7 +256,7 @@ def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=N
             )
         # We don't use .loss here since the model may return tuples instead of ModelOutput.
         loss = outputs["loss"] if isinstance(outputs, dict) else outputs[0]
-
+    print(f"lm loss: {loss:.5f}")
     return (loss, outputs) if return_outputs else loss
 
 

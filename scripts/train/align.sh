@@ -1,8 +1,8 @@
 #!/bin/bash
 
-export CUDA_VISIBLE_DEVICES=4,5,6,7
+export CUDA_VISIBLE_DEVICES=4,5
 
-N_PROC_PER_NODE=4
+N_PROC_PER_NODE=2
 N_NODE=1
 
 timestamp=$(date +%s)
@@ -10,7 +10,7 @@ PORT=$((timestamp % 10000 + 10000))
 ADDR=localhost
 WORK_DIR="/home/lijun2/multimodal/sft_qwen2_vl"
 
-CONFIG_NAME="/data/public/multimodal/yuanziqi/models/Qwen2.5-VL-7B-Instruct"
+CONFIG_NAME="/home/lijun2/multimodal/sft_qwen2_vl/src/model/config/downsample_2x2_s2.json"
 MODEL_NAME="/data/public/multimodal/yuanziqi/models/Qwen2.5-VL-7B-Instruct"
 PROCESSOR_NAME="/data/public/multimodal/yuanziqi/models/Qwen2.5-VL-7B-Instruct"
 
@@ -30,7 +30,7 @@ DATA_ARGS="
     --max_pixels=${MAX_PIXELS}
 "
 
-MODEL_MAX_LENGTH=8192
+MODEL_MAX_LENGTH=32768
 OUTPUT_DIR="runs/train/qwen2.5_vl_align/model"
 
 WEIGHT_DECAY=0.01
@@ -38,7 +38,8 @@ WARMUP_RATIO=0.1
 LR_SCHEDULER_TYPE=cosine
 NUM_TRAIN_EPOCHS=1
 PER_DEVICE_TRAIN_BATCH_SIZE=4
-GRADIENT_ACCUMULATION_STEPS=1
+GRADIENT_ACCUMULATION_STEPS=10
+MAX_STEPS=500
 
 TRAINING_ARGS="
     --tune_vision_tower=false \
@@ -61,7 +62,8 @@ TRAINING_ARGS="
     --bf16 \
     --gradient_checkpointing=true \
     --dataloader_num_workers=0 \
-    --report_to=tensorboard
+    --report_to=tensorboard \
+    --max_steps=${MAX_STEPS}
 "
 
 CMD="torchrun \
