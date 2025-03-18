@@ -1,12 +1,14 @@
 #!/bin/bash
 
-export CUDA_VISIBLE_DEVICES=0,1,2,3
+export CUDA_VISIBLE_DEVICES=4,5,6,7
 
 N_PROC_PER_NODE=4
 N_NODE=1
 
-PORT=10086
+timestamp=$(date +%s)
+PORT=$((timestamp % 10000 + 10000))
 ADDR=localhost
+WORK_DIR="/home/lijun2/multimodal/sft_qwen2_vl"
 
 CONFIG_NAME="/data/public/multimodal/yuanziqi/models/Qwen2.5-VL-7B-Instruct"
 MODEL_NAME="/data/public/multimodal/yuanziqi/models/Qwen2.5-VL-7B-Instruct"
@@ -67,8 +69,8 @@ CMD="torchrun \
     --nnodes=$N_NODE \
     --master_addr=$ADDR \
     --master_port=$PORT \
-    /home/yuanziqi/Work25/sft_qwen2_vl/src/train/train_mem.py \
-    --deepspeed /home/yuanziqi/Work25/sft_qwen2_vl/scripts/zero2.json \
+    $WORK_DIR/src/train/train_mem.py \
+    --deepspeed $WORK_DIR/scripts/zero2.json \
     $MODEL_ARGS \
     $TRAINING_ARGS \
     $DATA_ARGS"

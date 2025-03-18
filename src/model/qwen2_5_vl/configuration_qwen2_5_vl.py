@@ -46,6 +46,10 @@ class Qwen2_5_VLVisionConfig(PretrainedConfig):
         window_size=112,
         out_hidden_size=3584,
         fullatt_block_indexes=[7, 15, 23, 31],
+        image_token_id=151655,
+        video_token_id=151656,
+        pad_token_id=151643,
+        projector_cls="identity",
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -63,6 +67,10 @@ class Qwen2_5_VLVisionConfig(PretrainedConfig):
         self.window_size = window_size
         self.fullatt_block_indexes = fullatt_block_indexes
         self.out_hidden_size = out_hidden_size
+        self.image_token_id = image_token_id
+        self.video_token_id = video_token_id
+        self.pad_token_id = pad_token_id
+        self.projector_cls = projector_cls
 
 
 class Qwen2_5_VLConfig(PretrainedConfig):

@@ -51,6 +51,7 @@ from transformers.utils import (
     replace_return_docstrings,
 )
 from .configuration_qwen2_5_vl import Qwen2_5_VLConfig, Qwen2_5_VLVisionConfig
+from ..projector.builder import Projector
 
 
 if is_flash_attn_2_available():
@@ -436,6 +437,26 @@ class Qwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VLPreTrainedModel):
         )
         self.gradient_checkpointing = False
 
+        ## NOTE: compressor
+        if not hasattr(config, "image_token_id") or not hasattr(config, "projector_cls"):
+            projector_args = {
+                "projector_cls": "identity",
+                "kwargs": {}
+            }
+        else:
+            projector_args = {
+                "projector_cls": config.projector_cls,
+                "kwargs":{
+                    "dim": config.out_hidden_size,
+                    "image_token_id": config.image_token_id,
+                    "video_token_id": config.video_token_id,
+                    "spatial_merge_size": config.spatial_merge_size,
+                    "pad_token_id": config.pad_token_id
+                }
+            }
+        self.projector = Projector(projector_args)
+        self.projector.initialize_model()
+
     def rot_pos_emb(self, grid_thw):
         pos_ids = []
         for t, h, w in grid_thw:
@@ -506,7 +527,7 @@ class Qwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VLPreTrainedModel):
 
         return window_index, cu_window_seqlens
 
-    def forward(self, hidden_states: torch.Tensor, grid_thw: torch.Tensor) -> torch.Tensor:
+    def forward(self, hidden_states: torch.Tensor, grid_thw: torch.Tensor, **kwargs) -> torch.Tensor:
         """
         Args:
             hidden_states (`torch.Tensor` of shape `(seq_len, hidden_size)`):
@@ -562,8 +583,13 @@ class Qwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VLPreTrainedModel):
         hidden_states = self.merger(hidden_states)
         reverse_indices = torch.argsort(window_index)
         hidden_states = hidden_states[reverse_indices, :]
-
-        return hidden_states
+        compress = kwargs.pop("compress", False)
+        if compress:
+            hidden_states, grid_thw, input_ids, position_ids, attention_mask, labels = self.projector(x=hidden_states, grid_thw=grid_thw, **kwargs)
+            other_output = (grid_thw, input_ids, position_ids, attention_mask, labels)
+        else:
+            other_output = None
+        return hidden_states, other_output
 
 
 class Qwen2_5_VLRotaryEmbedding(nn.Module):
@@ -1743,6 +1769,8 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
         rope_deltas: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
         second_per_grid_ts: Optional[torch.Tensor] = None,
+        compress: bool = False,
+        scale: bool = False,
     ) -> Union[Tuple, Qwen2_5_VLCausalLMOutputWithPast]:
         r"""
             labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
@@ -1790,10 +1818,20 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         if inputs_embeds is None:
-            inputs_embeds = self.model.embed_tokens(input_ids)
+            # inputs_embeds = self.model.embed_tokens(input_ids)
             if pixel_values is not None:
                 pixel_values = pixel_values.type(self.visual.dtype)
-                image_embeds = self.visual(pixel_values, grid_thw=image_grid_thw)
+                image_embeds, other_outputs = self.visual(pixel_values, grid_thw=image_grid_thw, input_ids=input_ids, position_ids=position_ids, attention_mask=attention_mask, labels=labels, compress=compress)
+                if other_outputs is not None:
+                    image_grid_thw, input_ids, position_ids, attention_mask, labels = other_outputs
+
+            if pixel_values_videos is not None:
+                pixel_values_videos = pixel_values_videos.type(self.visual.dtype)
+                video_embeds, other_outputs = self.visual(pixel_values_videos, grid_thw=video_grid_thw, input_ids=input_ids, position_ids=position_ids, attention_mask=attention_mask, labels=labels, compress=compress)
+                if other_outputs is not None:
+                    video_grid_thw, input_ids, position_ids, attention_mask, labels = other_outputs
+            inputs_embeds = self.model.embed_tokens(input_ids)
+            if pixel_values is not None:
                 n_image_tokens = (input_ids == self.config.image_token_id).sum().item()
                 n_image_features = image_embeds.shape[0]
                 if n_image_tokens != n_image_features:
@@ -1808,10 +1846,7 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
 
                 image_embeds = image_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
                 inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
-
             if pixel_values_videos is not None:
-                pixel_values_videos = pixel_values_videos.type(self.visual.dtype)
-                video_embeds = self.visual(pixel_values_videos, grid_thw=video_grid_thw)
                 n_video_tokens = (input_ids == self.config.video_token_id).sum().item()
                 n_video_features = video_embeds.shape[0]
                 if n_video_tokens != n_video_features:

@@ -17,9 +17,12 @@
 
 
 from unittest import mock
-
+import os
 import sys
-sys.path.append('/home/yuanziqi/Work25/sft_qwen2_vl')
+project_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if project_dir not in sys.path:
+    sys.path.append(project_dir)
+    print(sys.path)
 
 from src.train.train import train
 from src.train.transformer_normalize_monkey_patch import (

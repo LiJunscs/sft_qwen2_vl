@@ -144,6 +144,9 @@ def training_step(
         self.optimizer.train()
 
     inputs = self._prepare_inputs(inputs)
+    inputs.update({
+        "compress": self.state.global_step % 2 == 0
+    })
     # if is_sagemaker_mp_enabled():
     #     loss_mb = smp_forward_backward(model, inputs, self.args.gradient_accumulation_steps)
     #     return loss_mb.reduce_mean().detach().to(self.args.device)

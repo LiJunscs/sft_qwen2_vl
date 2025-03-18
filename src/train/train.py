@@ -15,6 +15,7 @@ from src.utils.utils import rank0_print
 from src.train.trainer import CustomTrainer
 from src.model.projector import Projector
 from src.model.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLForConditionalGeneration
+from src.model.qwen2_5_vl.configuration_qwen2_5_vl import Qwen2_5_VLConfig
 from src.train.args import DataArguments, ModelArguments, TrainingArguments
 
 def load_safetensors_from_dir(dir_path):
@@ -65,20 +66,20 @@ def train(attn_implementation="flash_attention_2"):
 
     set_seed(training_args.seed)
 
-    model_config = AutoConfig.from_pretrained(model_args.config_name_or_path)
+    model_config = Qwen2_5_VLConfig.from_pretrained(model_args.config_name_or_path)
     model_config._attn_implementation = model_config.vision_config._attn_implementation = attn_implementation
     model = Qwen2_5_VLForConditionalGeneration(model_config)
     #TODO. mock patch model.visual.merger here.
-    mock_projector = Projector({
-        'projector_cls': 'dummy', 
-        'kwargs': {
-            'context_dim': model_config.vision_config.hidden_size, 
-            'dim': model_config.vision_config.out_hidden_size, 
-            'spatial_merge_size': model_config.vision_config.spatial_merge_size
-        }
-    })
-    model.visual.merger = mock_projector
-    model.visual.merger.initialize_model()
+    # mock_projector = Projector({
+    #     'projector_cls': 'dummy', 
+    #     'kwargs': {
+    #         'context_dim': model_config.vision_config.hidden_size, 
+    #         'dim': model_config.vision_config.out_hidden_size, 
+    #         'spatial_merge_size': model_config.vision_config.spatial_merge_size
+    #     }
+    # })
+    # model.visual.merger = mock_projector
+    # model.visual.merger.initialize_model()
 
     weights = load_safetensors_from_dir(dir_path=model_args.model_name_or_path)
     model.load_state_dict(state_dict=weights, strict=False, assign=True)
@@ -132,7 +133,9 @@ def train(attn_implementation="flash_attention_2"):
     projector_param_name, vm_param_name, lm_param_name = [], [], []
     if "projector" in mm_tunable_parts:
         for name, param in model.named_parameters():
-            if "visual" in name and "merger" in name:
+            # if "visual" in name and ("merger" in name or "projector" in name):
+            if "visual" in name and "projector" in name:
+                ## NOTE: Only for debug stage 1, modify later
                 param.requires_grad_(True)
                 projector_param_name.append(name)
     if "vision_tower" in mm_tunable_parts:
